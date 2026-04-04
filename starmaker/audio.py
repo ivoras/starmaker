@@ -120,12 +120,16 @@ class AudioSynth:
 
         # Persistent phases for oscillators (avoids discontinuities at chunk boundaries)
         self._drone_phase = {f: 0.0 for f in (55.0, 82.5, 110.0, 165.0,
-                                                220.0, 330.0, 30.0)}
+                                                220.0, 330.0, 30.0,
+                                                220.7, 329.3)}
         self._lfo_phases = {
             "drone_amp":  self._py_rng.uniform(0, 2 * math.pi),
             "warp_freq":  self._py_rng.uniform(0, 2 * math.pi),
             "sub_amp":    self._py_rng.uniform(0, 2 * math.pi),
         }
+
+        # Last 3 mono samples for stereo Haas delay across chunk boundaries
+        self._stereo_prev_tail: np.ndarray | None = None
 
     def _schedule_events(self, avg_lo: float, avg_hi: float) -> list[int]:
         """Generate sorted list of sample indices for Poisson-distributed events."""
@@ -174,20 +178,24 @@ class AudioSynth:
         warp_lfo = _lfo(warp_lfo_freq, n, warp_phase)
         self._lfo_phases["warp_freq"] = (warp_phase + 2 * math.pi * warp_lfo_freq * n / SAMPLE_RATE) % (2 * math.pi)
 
-        # Wobble ±2 Hz around 220 and 330
+        # Wobble ±2 Hz around 220 and 330 — integrate instantaneous frequency so
+        # phase matches at chunk boundaries (constant 220 Hz step was wrong).
         freq_wobble = warp_lfo * 4.0 - 2.0  # -2 .. +2 Hz
-        t = np.arange(n, dtype=np.float64) / SAMPLE_RATE
         p1 = self._drone_phase[220.0]
         p2 = self._drone_phase[330.0]
-        carrier1 = np.sin(2 * math.pi * (220.0 + freq_wobble) * t + p1).astype(np.float32)
-        carrier2 = np.sin(2 * math.pi * (330.0 + freq_wobble * 0.5) * t + p2).astype(np.float32)
-        # Update phases
-        self._drone_phase[220.0] = (p1 + 2 * math.pi * 220.0 * n / SAMPLE_RATE) % (2 * math.pi)
-        self._drone_phase[330.0] = (p2 + 2 * math.pi * 330.0 * n / SAMPLE_RATE) % (2 * math.pi)
+        inst1 = 220.0 + freq_wobble
+        inst2 = 330.0 + freq_wobble * 0.5
+        dphi = 2.0 * math.pi / SAMPLE_RATE
+        phase1 = p1 + np.cumsum(inst1 * dphi)
+        phase2 = p2 + np.cumsum(inst2 * dphi)
+        carrier1 = np.sin(phase1).astype(np.float32)
+        carrier2 = np.sin(phase2).astype(np.float32)
+        self._drone_phase[220.0] = float(phase1[-1] % (2 * math.pi))
+        self._drone_phase[330.0] = float(phase2[-1] % (2 * math.pi))
 
-        # Chorus: two detuned copies ±0.7 Hz
-        chorus1 = np.sin(2 * math.pi * 220.7 * t + p1 + 0.3).astype(np.float32)
-        chorus2 = np.sin(2 * math.pi * 329.3 * t + p2 + 0.7).astype(np.float32)
+        # Chorus at true detuned rates (separate phase state, not 220 Hz step)
+        chorus1 = self._sine_chunk(220.7, n)
+        chorus2 = self._sine_chunk(329.3, n)
         return ((carrier1 + carrier2) * 0.12 + (chorus1 + chorus2) * 0.04).astype(np.float32)
 
     def _sub_bass(self, n: int) -> np.ndarray:
@@ -250,11 +258,9 @@ class AudioSynth:
         self._inject_event(sig, self._blip_times, chunk_start, "blip")
         self._inject_event(sig, self._click_times, chunk_start, "click")
 
-        # Soft limiter / normalise to avoid clipping
-        peak = np.max(np.abs(sig))
-        if peak > 0.9:
-            sig = sig * (0.9 / peak)
-        return sig
+        # Soft limit (no per-chunk gain division). Independent peak normalisation
+        # per CHUNK_SECONDS made the global level jump at each chunk edge → clicks.
+        return (np.tanh(sig * 0.92) * 0.95).astype(np.float32)
 
     def generate(self, output_path: str, progress_cb=None) -> None:
         """Write the full audio to a WAV file in streaming chunks."""
@@ -272,10 +278,17 @@ class AudioSynth:
                 n = min(CHUNK_SAMPLES, self.total_samples - chunk_start)
                 mono = self._mix_chunk(n, chunk_start)
 
-                # Stereo: add slight stereo width by offsetting a copy
-                left  = mono.copy()
-                right = np.roll(mono, 3)  # 3-sample delay for width
-                right[:3] = mono[:3]
+                # Stereo: 3-sample Haas delay on the right. np.roll + filling
+                # right[:3] from mono[:3] repeats every CHUNK_SECONDS and caused
+                # a right-channel discontinuity (audible click) at each boundary.
+                left = mono
+                if self._stereo_prev_tail is None:
+                    right = np.roll(mono, 3)
+                    right[:3] = mono[:3]
+                else:
+                    extended = np.concatenate([self._stereo_prev_tail, mono])
+                    right = extended[:n].astype(np.float32, copy=False)
+                self._stereo_prev_tail = mono[-3:].copy()
 
                 # Interleave L/R and convert to int16
                 stereo = np.empty(n * 2, dtype=np.float32)
