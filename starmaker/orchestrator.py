@@ -90,8 +90,9 @@ def run(cfg: Config) -> None:
         t_start = time.monotonic()
 
         for frame_idx in range(cfg.total_frames):
+            buf = renderer.peek_output_buffer()
+            enc.sync_buffer(buf)  # before read_into: encoder must finish prior TurboPipe read
             buf = renderer.render_frame(frame_idx)
-            enc.sync_buffer(buf)    # ensure previous write is done before re-use
             enc.write_frame(buf)
             progress.update(frame_idx + 1)
 

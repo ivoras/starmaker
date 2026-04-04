@@ -146,7 +146,6 @@ def _build_ffmpeg_cmd(
         "-movflags", "+faststart",
         output,
     ]
-    print(cmd)
     return cmd
 
 

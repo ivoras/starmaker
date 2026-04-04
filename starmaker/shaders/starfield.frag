@@ -93,6 +93,6 @@ void main() {
         acc_alpha = min(1.0, acc_alpha + star_brightness * 0.12);
     }
 
-    acc_colour = clamp(acc_colour, 0.0, 1.0);
-    fragColor = vec4(acc_colour, clamp(acc_alpha, 0.0, 1.0));
+    // Allow >1 so composite + Reinhard can recover detail where many stars overlap.
+    fragColor = vec4(max(acc_colour, vec3(0.0)), clamp(acc_alpha, 0.0, 1.0));
 }

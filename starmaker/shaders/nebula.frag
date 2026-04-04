@@ -75,5 +75,8 @@ void main() {
     float inner_glow = smoothstep(0.58, 0.92, density);
     vec3 nebula = nebula_colour * mask * (0.16 + inner_glow * 0.70) * u_nebula_intensity;
 
-    fragColor = vec4(clamp(base_space + nebula, 0.0, 1.0), 1.0);
+    // No upper clamp: nebula renders to float16 FBO. Clamping here caused white
+    // plateaus at high u_nebula_intensity before tone mapping in post.frag.
+    vec3 out_rgb = base_space + nebula;
+    fragColor = vec4(max(out_rgb, vec3(0.0)), 1.0);
 }

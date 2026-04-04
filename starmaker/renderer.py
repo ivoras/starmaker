@@ -8,8 +8,9 @@ Multi-pass pipeline
 -------------------
 Pass 1  nebula_fbo    Full-screen nebula background
 Pass 2  stars_fbo     Starfield + warp streaks (RGBA)
-Pass 3  composite_fbo Blend nebula + stars + dust
-Pass 4  post_fbo      Bloom, vignette, grain, grade, tone-map → final
+Pass 3  composite_fbo Blend nebula + stars + dust (tonemap)
+Pass 4  post_fbo      Bloom, vignette, grain, grade, gamma → float RGB
+                      (packed to RGB8 on CPU for ffmpeg)
 """
 
 from __future__ import annotations
@@ -92,8 +93,10 @@ class Renderer:
         self._comp_tex = self.ctx.texture((w, h), 3, dtype="f2")
         self._comp_fbo = self.ctx.framebuffer(color_attachments=[self._comp_tex])
 
-        # post / final output: RGB8 for easy readback
-        self._post_tex = self.ctx.texture((w, h), 3, dtype="u1")
+        # Post output must be float: on some Windows GL stacks, normalized RGB8
+        # render targets quantize almost every non-zero fragment to 255 (flat white).
+        # Half-float FBO + CPU quantize to RGB8 matches what ffmpeg expects.
+        self._post_tex = self.ctx.texture((w, h), 3, dtype="f2")
         self._post_fbo = self.ctx.framebuffer(color_attachments=[self._post_tex])
 
         # Clamp render textures at edges so post effects like bloom do not wrap
@@ -103,9 +106,10 @@ class Renderer:
             tex.repeat_y = False
             tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
 
-        # Double-buffered output buffers (for TurboPipe)
+        # Double-buffered output buffers (for TurboPipe) — packed RGB8 for ffmpeg
         bytes_per_frame = w * h * 3
         self.buffers = [self.ctx.buffer(reserve=bytes_per_frame) for _ in range(2)]
+        self._post_hdr_read = self.ctx.buffer(reserve=w * h * 3 * 2)
         self._buf_idx = 0
 
         # Cache the seed as a float uniform value
@@ -140,11 +144,28 @@ class Renderer:
         if "u_dust_amount" in self._prog_composite:
             self._prog_composite["u_dust_amount"].value = cfg.dust_amount
 
+    def _pack_post_half_to_rgb8(self, dst: moderngl.Buffer) -> None:
+        """Convert post FBO (RGB f16, display-referred 0–1) into dst RGB8 bytes."""
+        raw = self._post_hdr_read.read()
+        f16 = np.frombuffer(raw, dtype=np.float16).reshape(self._h, self._w, 3)
+        u8 = np.clip(np.round(f16.astype(np.float32) * 255.0), 0, 255).astype(np.uint8)
+        dst.write(u8.tobytes())
+
+    def peek_output_buffer(self) -> moderngl.Buffer:
+        """The buffer the next :meth:`render_frame` will ``read_into``.
+
+        TurboPipe may still be reading this buffer from an earlier frame; the
+        caller must ``sync`` that copy *before* rendering so the GPU readback
+        does not clobber data ffmpeg is still consuming.
+        """
+        return self.buffers[self._buf_idx]
+
     def render_frame(self, frame_index: int) -> moderngl.Buffer:
         """Render one frame and return the double-buffered output Buffer.
 
-        The caller is responsible for calling turbopipe.sync(buf) before
-        re-using the buffer, and turbopipe.pipe(buf, fd) to consume it.
+        Call :meth:`peek_output_buffer` and ``turbopipe.sync`` that buffer
+        *before* this method so an in-flight encode does not overlap the GPU
+        readback. The caller then passes the returned buffer to ``turbopipe.pipe``.
         """
         t = frame_index / self.cfg.fps
 
@@ -188,13 +209,15 @@ class Renderer:
         # -- Readback into double-buffered output ---------------------------
         buf = self.buffers[self._buf_idx]
         self._buf_idx ^= 1
-        self._post_fbo.read_into(buf, components=3, dtype="u1")
+        self._post_fbo.read_into(self._post_hdr_read, components=3, dtype="f2")
+        self._pack_post_half_to_rgb8(buf)
         return buf
 
     def release(self) -> None:
         """Free GPU resources."""
         for buf in self.buffers:
             buf.release()
+        self._post_hdr_read.release()
         for obj in (
             self._nebula_tex, self._stars_tex, self._comp_tex, self._post_tex,
             self._nebula_fbo, self._stars_fbo, self._comp_fbo, self._post_fbo,

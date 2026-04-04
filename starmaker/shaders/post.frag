@@ -7,7 +7,7 @@
 //   2. Vignette -- subtle edge darkening
 //   3. Film grain -- mild organic noise to prevent banding in dark regions
 //   4. Colour grading -- slight blue-shift and contrast lift for "cold space" feel
-//   5. Tone mapping -- simple Reinhard to keep highlights from clipping
+//   (Scene tonemap lives in composite.frag; this pass outputs display-referred RGB.)
 
 uniform sampler2D u_scene;
 uniform float     u_time;
@@ -20,11 +20,6 @@ float hash21(vec2 p) {
     p = fract(p * vec2(234.34, 435.345));
     p += dot(p, p + 34.23);
     return fract(p.x * p.y);
-}
-
-// Reinhard tone mapping
-vec3 reinhard(vec3 x) {
-    return x / (1.0 + x);
 }
 
 // Single-pass approximate bloom: samples a cross-shaped neighbourhood of
@@ -58,9 +53,8 @@ vec3 bloom(sampler2D tex, vec2 uv, vec2 texel_size) {
     for (int i = 0; i < TAPS; i++) {
         vec2 offset_uv = uv + offsets[i] * texel_size * bloom_radius;
         vec3 sample_col = texture(tex, offset_uv).rgb;
-        // Only bright pixels contribute to bloom
         float lum = dot(sample_col, vec3(0.299, 0.587, 0.114));
-        float bloom_mask = smoothstep(0.4, 1.0, lum);
+        float bloom_mask = smoothstep(0.25, 0.85, lum);
         acc += sample_col * bloom_mask * weights[i];
         weight_sum += weights[i];
     }
@@ -89,17 +83,18 @@ void main() {
     float grain = hash21(uv + fract(u_time * 0.1)) * 2.0 - 1.0;
     col += grain * grain_amount;
 
-    // 4. Colour grading: slight blue-cyan tint, lift shadows, boost contrast
-    // Lift shadows slightly (lift the darkest parts to a dim blue)
-    col = col * 0.98 + 0.004 * vec3(0.1, 0.15, 0.25);
-    // Cool tint: push blue channel slightly
+    // 4. Colour grading: slight blue-cyan tint; shadow lift only (no wash on highlights)
+    float lin_lum = dot(col, vec3(0.299, 0.587, 0.114));
+    float shadow_w = clamp(1.0 - lin_lum * 2.5, 0.0, 1.0);
+    col = col * 0.98 + 0.004 * shadow_w * vec3(0.1, 0.15, 0.25);
     col.b = col.b * 1.06;
     col.r = col.r * 0.97;
-    // Contrast: apply S-curve via smoothstep approximation
-    col = mix(col, smoothstep(0.05, 0.95, col), 0.12);
+    // Mild midtone contrast
+    vec3 curved = smoothstep(0.02, 0.88, col);
+    col = mix(col, curved, 0.08);
 
-    // 5. Reinhard tone mapping
-    col = reinhard(col);
+    // Tone mapping already applied in composite.frag; second Reinhard here
+    // crushed bright HDR and made the frame a flat near-white sheet.
 
     // Gamma correction: convert from linear to gamma 2.2
     col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));

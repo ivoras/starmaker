@@ -72,5 +72,10 @@ void main() {
         combined += dust * vec3(0.7, 0.8, 1.0);
     }
 
-    fragColor = vec4(clamp(combined, 0.0, 1.0), 1.0);
+    combined = max(combined, vec3(0.0));
+    // Component-wise Reinhard on emissive sum: additive nebula+stars can exceed
+    // 1.0 by a lot; mapping x/(1+x) keeps the comp buffer in a sane 0–1 range
+    // so post (bloom, grade, gamma) does not collapse the whole frame to white.
+    combined = combined / (vec3(1.0) + combined);
+    fragColor = vec4(combined, 1.0);
 }
