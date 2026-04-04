@@ -11,6 +11,13 @@ Pass 2  stars_fbo     Starfield + warp streaks (RGBA)
 Pass 3  composite_fbo Blend nebula + stars + dust (tonemap)
 Pass 4  post_fbo      Bloom, vignette, grain, grade, gamma → float RGB
                       (packed to RGB8 on CPU for ffmpeg)
+
+Performance note
+----------------
+Normalized RGB8 render targets are buggy on some Windows GL drivers (any
+non-zero shade becomes 255), so the post pass uses half-float and we convert
+to RGB8 on the CPU. That adds an extra GPU read (~2× bytes vs RGB8), NumPy
+work, and a buffer upload each frame versus the old single ``read_into``.
 """
 
 from __future__ import annotations
@@ -110,6 +117,9 @@ class Renderer:
         bytes_per_frame = w * h * 3
         self.buffers = [self.ctx.buffer(reserve=bytes_per_frame) for _ in range(2)]
         self._post_hdr_read = self.ctx.buffer(reserve=w * h * 3 * 2)
+        # Preallocated pack workspace (avoid per-frame alloc in the readback path)
+        self._pack_f32 = np.empty((h, w, 3), dtype=np.float32)
+        self._pack_u8 = np.empty((h, w, 3), dtype=np.uint8)
         self._buf_idx = 0
 
         # Cache the seed as a float uniform value
@@ -148,8 +158,11 @@ class Renderer:
         """Convert post FBO (RGB f16, display-referred 0–1) into dst RGB8 bytes."""
         raw = self._post_hdr_read.read()
         f16 = np.frombuffer(raw, dtype=np.float16).reshape(self._h, self._w, 3)
-        u8 = np.clip(np.round(f16.astype(np.float32) * 255.0), 0, 255).astype(np.uint8)
-        dst.write(u8.tobytes())
+        np.multiply(f16, 255.0, out=self._pack_f32, dtype=np.float32, casting="unsafe")
+        np.rint(self._pack_f32, out=self._pack_f32)
+        np.clip(self._pack_f32, 0.0, 255.0, out=self._pack_f32)
+        self._pack_u8[:] = self._pack_f32.astype(np.uint8, copy=False)
+        dst.write(self._pack_u8)
 
     def peek_output_buffer(self) -> moderngl.Buffer:
         """The buffer the next :meth:`render_frame` will ``read_into``.

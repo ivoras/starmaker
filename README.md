@@ -82,13 +82,18 @@ starmaker --seed 42 --nebula-intensity 2.5 --nebula-scale 1.5 -o nebula_42.mp4
 # Ultra-dense starfield at high speed
 starmaker --star-density 1200 --warp-speed 3.0 -d 600 -o warp_storm.mp4
 
+# Dense starfield, fast warp
+python -m starmaker --star-density 1000 --warp-speed 3.0 -d 60 -o warp.mp4
+
+# Minimal nebula, clean space
+python -m starmaker --nebula-intensity 0.3 --dust-amount 0.1 -d 60 -o clean.mp4
+
 # 4K 60fps (needs a capable GPU)
 starmaker -r 3840x2160 --fps 60 -d 3600 -o space_4k.mp4
 
 # Silent video, force NVIDIA encoder
 starmaker --no-audio --encoder nvenc -o silent.mp4
 ```
-
 ---
 
 ## Parameters
