@@ -1,0 +1,2 @@
+[console_scripts]
+starmaker = starmaker.cli:main

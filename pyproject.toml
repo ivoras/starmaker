@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "starmaker"
+version = "0.1.0"
+description = "Procedural space warp video generator with ASMR audio"
+requires-python = ">=3.10"
+dependencies = [
+    "moderngl>=5.12",
+    "turbopipe>=1.2",
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "tqdm>=4.66",
+]
+
+[project.scripts]
+starmaker = "starmaker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["starmaker*"]
+
+[tool.setuptools.package-data]
+starmaker = ["shaders/*.vert", "shaders/*.frag"]

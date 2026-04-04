@@ -1,0 +1,5 @@
+moderngl>=5.12
+turbopipe>=1.2
+numpy>=1.26
+scipy>=1.12
+tqdm>=4.66

@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: starmaker
+Version: 0.1.0
+Summary: Procedural space warp video generator with ASMR audio
+Requires-Python: >=3.10
+Requires-Dist: moderngl>=5.12
+Requires-Dist: turbopipe>=1.2
+Requires-Dist: numpy>=1.26
+Requires-Dist: scipy>=1.12
+Requires-Dist: tqdm>=4.66
