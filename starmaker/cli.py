@@ -3,12 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import os
 import random
-import sys
-import tempfile
-import time
-from pathlib import Path
 
 from starmaker.config import Config
 
@@ -111,9 +106,9 @@ Examples:
     p.add_argument(
         "--dust-amount",
         type=float,
-        default=0.5,
+        default=0.08,
         metavar="F",
-        help="Foreground dust particle density [0.0-2.0] (default: 0.5)",
+        help="Foreground dust particle density [0.0-2.0] (default: 0.08)",
     )
     p.add_argument(
         "--encoder",
@@ -160,7 +155,7 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError as exc:
         parser.error(str(exc))
 
-    print(f"Starmaker — seed={cfg.seed}, {cfg.width}x{cfg.height} @ {cfg.fps}fps, "
+    print(f"Starmaker - seed={cfg.seed}, {cfg.width}x{cfg.height} @ {cfg.fps}fps, "
           f"{cfg.duration:.0f}s ({cfg.total_frames} frames)")
     print(f"  nebula_intensity={cfg.nebula_intensity}  nebula_scale={cfg.nebula_scale}")
     print(f"  warp_speed={cfg.warp_speed}  star_density={cfg.star_density}  "

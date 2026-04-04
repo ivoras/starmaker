@@ -45,7 +45,9 @@ def _find_ffmpeg() -> str:
     return path
 
 
-_PROBE_W, _PROBE_H = 32, 32  # tiny frame keeps probe fast on all platforms
+# AMF (and some other HW encoders) reject very small frames; 32x32 fails Init()
+# on h264_amf. 128x128 is still tiny (~48 KiB) and satisfies common minimums.
+_PROBE_W, _PROBE_H = 128, 128
 
 
 def _probe_encoder(ffmpeg: str, codec: str) -> bool:
@@ -126,13 +128,14 @@ def _build_ffmpeg_cmd(
         "-s", f"{width}x{height}",
         "-r", str(fps),
         "-i", "pipe:0",
+        "-b:v", "8M",
         "-vcodec", codec,
     ]
 
     if label == "nvenc":
-        cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"]
+        cmd += ["-preset", "p4", "-rc", "vbr", "-cq", "23"]
     elif label == "amf":
-        cmd += ["-quality", "balanced", "-rc", "vbr_peak", "-b:v", "8M"]
+        cmd += ["-quality", "balanced", "-rc", "vbr_peak"]
     elif label == "qsv":
         cmd += ["-global_quality", "25", "-look_ahead", "1"]
     else:  # libx264 software

@@ -76,7 +76,7 @@ void main() {
 
     // 1. Bloom
     vec3 bloom_col = bloom(u_scene, uv, texel);
-    col = col + bloom_col * 0.25;
+    col = col + bloom_col * 0.14;
 
     // 2. Vignette
     vec2 vig_uv = uv * 2.0 - 1.0;
@@ -85,18 +85,18 @@ void main() {
     col *= (0.5 + 0.5 * vig);
 
     // 3. Film grain
-    float grain_amount = 0.025;
+    float grain_amount = 0.006;
     float grain = hash21(uv + fract(u_time * 0.1)) * 2.0 - 1.0;
     col += grain * grain_amount;
 
     // 4. Colour grading: slight blue-cyan tint, lift shadows, boost contrast
     // Lift shadows slightly (lift the darkest parts to a dim blue)
-    col = col * 0.95 + 0.008 * vec3(0.1, 0.15, 0.25);
+    col = col * 0.98 + 0.004 * vec3(0.1, 0.15, 0.25);
     // Cool tint: push blue channel slightly
     col.b = col.b * 1.06;
     col.r = col.r * 0.97;
     // Contrast: apply S-curve via smoothstep approximation
-    col = mix(col, smoothstep(0.05, 0.95, col), 0.2);
+    col = mix(col, smoothstep(0.05, 0.95, col), 0.12);
 
     // 5. Reinhard tone mapping
     col = reinhard(col);

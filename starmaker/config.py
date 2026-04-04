@@ -27,7 +27,7 @@ class Config:
     nebula_intensity: float = 1.0    # nebula brightness (0.0 – 3.0)
     nebula_scale: float = 1.0        # size of nebula features (0.1 – 5.0)
     warp_speed: float = 1.0          # fly-through speed (0.1 – 5.0)
-    dust_amount: float = 0.5         # foreground dust density (0.0 – 2.0)
+    dust_amount: float = 0.08        # foreground dust density (0.0 – 2.0)
 
     # Encoding
     encoder: str = "auto"            # auto | nvenc | amf | qsv | x264

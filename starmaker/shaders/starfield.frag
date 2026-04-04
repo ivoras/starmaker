@@ -18,13 +18,13 @@ uniform float u_seed;           // float from integer seed
 
 out vec4 fragColor;
 
+float soft_disc(float dist, float radius) {
+    return 1.0 - smoothstep(0.0, radius, dist);
+}
+
 // ---- Pseudo-random helpers -------------------------------------------
 float hash1(float n) {
     return fract(sin(n) * 43758.5453123);
-}
-
-float hash1_2(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
 // ---- Star colour palette: white, blue-white, yellow-white, red-giant --
@@ -41,70 +41,56 @@ void main() {
     float aspect = u_resolution.x / u_resolution.y;
     vec2 screen = (uv - 0.5) * vec2(aspect, 1.0);
 
-    float depth_range = 256.0;
-    float max_speed = u_warp_speed * 60.0;  // depth units per second
-
     vec3 acc_colour = vec3(0.0);
-    float acc_alpha  = 0.0;
+    float acc_alpha = 0.0;
 
     int star_count = u_star_density;
 
     for (int i = 0; i < star_count; i++) {
         float fi = float(i) + u_seed;
 
-        // Star 2D position in a ±250 virtual-unit field, using sin() as a
-        // compact hash (no uniform array needed).
-        vec2 star_pos = vec2(sin(fi * 1.7) * 250.0,
-                             sin(fi * fi * 0.003 + fi) * 250.0);
+        // Stable star position in a small square around the origin. Perspective
+        // projection and cycling depth create the impression of flying forward.
+        vec2 base = vec2(
+            hash1(fi * 11.31) * 2.0 - 1.0,
+            hash1(fi * 17.17) * 2.0 - 1.0
+        );
+        base.x *= aspect;
+        base *= 0.82;
 
-        // Z-depth cycles from 0..depth_range, approaching viewer over time
-        float raw_z = mod(fi * fi * 0.005 + max_speed * u_time, depth_range);
-        float z = depth_range - raw_z;  // 256 = far, 0 = right here
+        // Stars move toward the viewer as depth shrinks toward zero, then wrap.
+        float cycle = fract(hash1(fi * 0.071) + u_time * (0.045 + 0.11 * u_warp_speed));
+        float depth = mix(1.25, 0.05, cycle);
+        vec2 proj = base / depth;
 
-        float fade = raw_z / depth_range; // 0=just appeared, 1=just passed
+        // Skip stars far outside the viewport to reduce haze.
+        if (abs(proj.x) > aspect * 1.3 || abs(proj.y) > 1.3) {
+            continue;
+        }
 
-        // Project: stars map ±250 world units to the screen via perspective
-        float inv_z = 1.0 / max(z, 0.5);
-        vec2 proj = star_pos * inv_z;
-
-        // Distance from this pixel to the star's projected centre
-        float dist = length(screen - proj);
-
-        // Streak length proportional to velocity (closer = longer streak)
-        // Direction is radially outward (warp effect)
-        float speed_factor = max_speed * inv_z * 0.016; // pixels-ish per frame
-        float streak_len = speed_factor * u_star_size * 3.0;
-        streak_len = clamp(streak_len, 0.0, 0.4);
-
-        // Build a capsule shape: a point at proj, elongated toward the centre
-        vec2 streak_dir = normalize(proj + vec2(0.001, 0.001)); // away from centre
-        // Project pixel onto the streak axis
+        vec2 dir = normalize(proj + vec2(1e-4));
         vec2 to_pixel = screen - proj;
-        float along  = dot(to_pixel, streak_dir);
-        float perp_d = length(to_pixel - along * streak_dir);
+        float along = dot(to_pixel, dir);
+        float perp_d = length(to_pixel - along * dir);
 
-        // Streak body: from 0 to streak_len along the outward axis
-        float along_clamped = clamp(along, -streak_len * 0.1, streak_len);
-        float capsule_dist  = length(vec2(along - along_clamped, perp_d));
+        float proximity = 1.0 - depth / 1.25;
+        float streak_len = (0.004 + proximity * proximity * 0.17) * u_star_size * (0.65 + u_warp_speed * 0.55);
+        float point_r = (0.0009 + proximity * 0.0032) * u_star_size;
+        float glow_r = point_r * 5.0;
 
-        // Point radius scales with size param and fades with distance
-        float point_r = 0.0025 * u_star_size * (fade * 0.5 + 0.3);
-        float glow_r  = point_r * 4.0;
+        float along_clamped = clamp(along, -point_r, streak_len);
+        float capsule_dist = length(vec2(along - along_clamped, perp_d));
 
-        // Soft glow around the streak/point
-        float core  = smoothstep(point_r, 0.0, capsule_dist);
-        float glow  = smoothstep(glow_r,  0.0, capsule_dist) * 0.3;
-        float star_brightness = (core + glow) * fade * fade;
+        float core = soft_disc(capsule_dist, point_r);
+        float glow = soft_disc(capsule_dist, glow_r) * (0.08 + proximity * 0.12);
+        float star_brightness = (core + glow) * (0.10 + proximity * proximity * 2.2);
 
-        // Twinkle: very subtle, slower for distant stars
-        float twinkle = 1.0 + 0.08 * sin(u_time * (2.5 + hash1(fi) * 3.0) + fi);
+        float twinkle = 0.96 + 0.04 * sin(u_time * (1.0 + hash1(fi) * 2.0) + fi);
         star_brightness *= twinkle;
 
         vec3 col = starColour(fi) * star_brightness;
-
-        // Additive accumulation (stars are emissive)
         acc_colour += col;
-        acc_alpha   = min(1.0, acc_alpha + star_brightness);
+        acc_alpha = min(1.0, acc_alpha + star_brightness * 0.12);
     }
 
     acc_colour = clamp(acc_colour, 0.0, 1.0);

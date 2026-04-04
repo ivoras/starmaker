@@ -39,7 +39,7 @@ class ProgressReporter:
 
         bar_len = 30
         filled  = int(bar_len * done / self.total)
-        bar     = "█" * filled + "░" * (bar_len - filled)
+        bar     = "#" * filled + "-" * (bar_len - filled)
 
         print(
             f"\r[{bar}] {pct:5.1f}%  {done}/{self.total} {self.desc}"

@@ -96,6 +96,13 @@ class Renderer:
         self._post_tex = self.ctx.texture((w, h), 3, dtype="u1")
         self._post_fbo = self.ctx.framebuffer(color_attachments=[self._post_tex])
 
+        # Clamp render textures at edges so post effects like bloom do not wrap
+        # bright pixels from one side of the frame to the opposite side.
+        for tex in (self._nebula_tex, self._stars_tex, self._comp_tex, self._post_tex):
+            tex.repeat_x = False
+            tex.repeat_y = False
+            tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+
         # Double-buffered output buffers (for TurboPipe)
         bytes_per_frame = w * h * 3
         self.buffers = [self.ctx.buffer(reserve=bytes_per_frame) for _ in range(2)]

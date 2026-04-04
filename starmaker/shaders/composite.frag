@@ -14,6 +14,10 @@ uniform float     u_seed;
 
 out vec4 fragColor;
 
+float soft_disc(float dist, float radius) {
+    return 1.0 - smoothstep(0.0, radius, dist);
+}
+
 // ---- Micro-dust / particle noise ------------------------------------
 // Very small, faint luminous specks scattered across the field.
 
@@ -45,7 +49,7 @@ float dustNoise(vec2 uv) {
             float d = length(frac - vec2(dx, dy) - mote_pos);
             float radius = 0.006 + 0.014 * hash2(neighbour + vec2(3.1, 9.9));
             float brightness = hash2(neighbour + vec2(1.1, 5.5)) * 0.35;
-            dust += brightness * smoothstep(radius, 0.0, d);
+            dust += brightness * soft_disc(d, radius);
         }
     }
     return dust;
@@ -57,12 +61,13 @@ void main() {
     vec4 nebula  = texture(u_nebula, uv);
     vec4 stars   = texture(u_stars,  uv);
 
-    // Alpha-blend stars over nebula
-    vec3 combined = nebula.rgb * (1.0 - stars.a) + stars.rgb;
+    // Stars are emissive, so additive composition reads more naturally than
+    // alpha blending and avoids washing out the nebula.
+    vec3 combined = nebula.rgb + stars.rgb;
 
     // Foreground dust
     if (u_dust_amount > 0.0) {
-        float dust = dustNoise(uv) * u_dust_amount * 0.6;
+        float dust = dustNoise(uv) * u_dust_amount * 0.05;
         // Dust is slightly blue-tinted
         combined += dust * vec3(0.7, 0.8, 1.0);
     }

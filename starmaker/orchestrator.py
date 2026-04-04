@@ -73,7 +73,7 @@ def run(cfg: Config) -> None:
         from starmaker.encoder import create_encoder
 
         renderer = Renderer(cfg)
-        print(f"[video] OpenGL context ready — {cfg.width}x{cfg.height} @ {cfg.fps} fps", flush=True)
+        print(f"[video] OpenGL context ready - {cfg.width}x{cfg.height} @ {cfg.fps} fps", flush=True)
 
         # The video-only file is a temporary intermediate; audio is muxed later
         enc, ffmpeg_path = create_encoder(
@@ -84,7 +84,7 @@ def run(cfg: Config) -> None:
             fps=cfg.fps,
             temp_video_path=tmp_video,
         )
-        print(f"[video] Encoding with {enc.codec} → {tmp_video}", flush=True)
+        print(f"[video] Encoding with {enc.codec} -> {tmp_video}", flush=True)
 
         progress = ProgressReporter(cfg.total_frames, desc="frames")
         t_start = time.monotonic()
