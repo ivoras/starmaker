@@ -121,6 +121,14 @@ Examples:
         action="store_true",
         help="Skip audio generation and produce a silent video",
     )
+    p.add_argument(
+        "--engine-freq-scale",
+        type=float,
+        default=0.7,
+        metavar="F",
+        help="Engine audio pitch scale [0.25-2.5]: <1 lowers drone/sub/warp "
+        "frequencies (default: 0.7)",
+    )
 
     return p
 
@@ -148,6 +156,7 @@ def main(argv: list[str] | None = None) -> None:
         dust_amount=args.dust_amount,
         encoder=args.encoder,
         no_audio=args.no_audio,
+        engine_freq_scale=args.engine_freq_scale,
     )
 
     try:
@@ -160,7 +169,8 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  nebula_intensity={cfg.nebula_intensity}  nebula_scale={cfg.nebula_scale}")
     print(f"  warp_speed={cfg.warp_speed}  star_density={cfg.star_density}  "
           f"dust_amount={cfg.dust_amount}")
-    print(f"  encoder={cfg.encoder}  output={cfg.output}")
+    print(f"  engine_freq_scale={cfg.engine_freq_scale}  "
+          f"encoder={cfg.encoder}  output={cfg.output}")
 
     from starmaker.orchestrator import run
     run(cfg)

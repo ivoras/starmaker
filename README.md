@@ -16,16 +16,22 @@ Everything is deterministic: given the same `--seed`, the output is identical.
   pre-rendered assets required.
 - **Warp streaks** — Stars close to the camera elongate into motion-blur
   streaks that grow longer the faster you travel.
-- **Multi-pass pipeline** — Nebula → Starfield → Composite (dust) → Post
-  (bloom, vignette, film grain, colour grade, tone-map).
+- **Multi-pass pipeline** — Nebula → Starfield → Composite (additive blend +
+  dust + HDR-friendly tonemap) → Post (bloom, vignette, grain, grade, gamma).
+- **Correct colour readback** — Final pass uses half-float RGB on the GPU;
+  frames are converted to RGB8 on the CPU for ffmpeg (avoids a Windows OpenGL
+  bug where RGB8 render targets blow out to white).
 - **Hardware-accelerated encoding** — Automatically tries NVENC (NVIDIA), AMF
-  (AMD), QSV (Intel) before falling back to `libx264`.  Zero-copy frame
+  (AMD), QSV (Intel) before falling back to `libx264`. Zero-copy frame
   transfer via [TurboPipe](https://github.com/BrokenSource/TurboPipe).
 - **Procedural audio** — Six synthesised layers: engine drone, warp hum,
-  sub-bass throb, ambient pad, panel blips, and clicks.  All timed from the
-  seed, no samples needed.
-- **4-hour default** — Designed for long ambient sessions.  A typical 1080p
-  4-hour encode takes around 60–90 minutes on a mid-range GPU.
+  sub-bass throb, ambient pad, panel blips, and clicks. Engine-related pitches
+  are scaled by `--engine-freq-scale` (default lowers the engine vs nominal
+  1.0). Chunk boundaries are smoothed (stereo delay + soft limiter) to avoid
+  clicks every 10 seconds.
+- **4-hour default** — Designed for long ambient sessions. A typical 1080p
+  4-hour encode time depends on GPU and encoder; half-float readback adds some
+  overhead vs a direct RGB8 path.
 
 ---
 
@@ -79,6 +85,12 @@ starmaker -o space_ambient.mp4
 # Reproducible run with vivid nebulas
 starmaker --seed 42 --nebula-intensity 2.5 --nebula-scale 1.5 -o nebula_42.mp4
 
+# Deeper engine pitch (default is already 0.7; lower = deeper)
+starmaker --engine-freq-scale 0.55 -d 120 -o deep_engine.mp4
+
+# Nominal engine tuning (reference frequencies at 1.0×)
+starmaker --engine-freq-scale 1.0 -d 60 -o engine_ref.mp4
+
 # Ultra-dense starfield at high speed
 starmaker --star-density 1200 --warp-speed 3.0 -d 600 -o warp_storm.mp4
 
@@ -94,6 +106,7 @@ starmaker -r 3840x2160 --fps 60 -d 3600 -o space_4k.mp4
 # Silent video, force NVIDIA encoder
 starmaker --no-audio --encoder nvenc -o silent.mp4
 ```
+
 ---
 
 ## Parameters
@@ -110,7 +123,8 @@ starmaker --no-audio --encoder nvenc -o silent.mp4
 | `--nebula-intensity` | `1.0` | Nebula brightness \[0.0–3.0\] |
 | `--nebula-scale` | `1.0` | Nebula feature size \[0.1–5.0\] |
 | `--warp-speed` | `1.0` | Fly-through speed \[0.1–5.0\] |
-| `--dust-amount` | `0.5` | Foreground dust density \[0.0–2.0\] |
+| `--dust-amount` | `0.08` | Foreground dust density \[0.0–2.0\] |
+| `--engine-freq-scale` | `0.7` | Engine audio pitch multiplier \[0.25–2.5\]; `<1` lowers drone/sub/warp |
 | `--encoder` | `auto` | `auto` \| `nvenc` \| `amf` \| `qsv` \| `x264` |
 | `--no-audio` | off | Skip audio synthesis |
 
@@ -125,8 +139,8 @@ cli.py ──► orchestrator.py
               │       quad.vert         shared full-screen quad
               │       nebula.frag       fBm turbulence nebula
               │       starfield.frag    warp-speed star particles
-              │       composite.frag    blend + dust pass
-              │       post.frag         bloom / vignette / grade
+              │       composite.frag    blend + dust + tonemap
+              │       post.frag         bloom / vignette / grade / gamma
               ├── encoder.py   (ffmpeg subprocess + TurboPipe)
               └── audio.py     (numpy/scipy synthesis)
 ```
@@ -134,41 +148,39 @@ cli.py ──► orchestrator.py
 ### Render pipeline
 
 ```
-[nebula FBO] ──► [starfield FBO] ──► [composite FBO] ──► [post FBO]
-                                                              │
-                                                     TurboPipe → ffmpeg stdin
-                                                              │
-                                                     [ temp video.mp4 ]
-                                                              │
-                                              ffmpeg mux ◄── [ audio.wav ]
-                                                              │
-                                                     [ final output.mp4 ]
+[nebula f16] ──► [stars f16] ──► [composite f16] ──► [post f16]
+                                                         │
+                              CPU: f16 → RGB8 pack → TurboPipe → ffmpeg stdin
+                                                         │
+                                                [ temp video.mp4 ]
+                                                         │
+                                         ffmpeg mux ◄── [ audio.wav ]
+                                                         │
+                                                [ final output.mp4 ]
 ```
 
 ### Audio layers
 
-| Layer | Frequencies | Technique |
-|-------|-------------|-----------|
-| Engine drone | 55, 82.5, 110, 165 Hz | Additive sines + pink noise bandpass |
-| Warp hum | 220, 330 Hz | FM wobble + chorus detuning |
-| Sub-bass throb | 30 Hz | Slow rhythmic envelope |
-| Ambient pad | 300–600 Hz | Bandpass filtered white noise |
-| Blips | 800–2000 Hz | Poisson-timed sine chirps |
+| Layer | Nominal frequencies (× `--engine-freq-scale`) | Notes |
+|-------|-----------------------------------------------|--------|
+| Engine drone | ~55, 82.5, 110, 165 Hz at scale 1.0 | + pink noise in scaled engine band |
+| Warp hum | ~220, 330 Hz + detuned chorus | FM wobble depth scales with engine scale |
+| Sub-bass throb | ~30 Hz | Rhythmic envelope |
+| Ambient pad | 300–600 Hz | Not scaled by engine flag |
+| Blips | 800–2000 Hz | Poisson-timed chirps |
 | Clicks | broadband | Poisson-timed noise bursts |
 
 ---
 
 ## Performance notes
 
-- Render time is dominated by GPU shader throughput.  At 1080p/30fps with
-  default settings expect roughly 100–300 fps on a modern GPU, meaning a
-  4-hour video encodes in 24–72 minutes.
-- TurboPipe eliminates the CPU copy bottleneck between the OpenGL framebuffer
-  and ffmpeg stdin.  Without it the Python `write()` fallback halves throughput.
-- Hardware encoders (NVENC/AMF/QSV) are significantly faster than `libx264`
-  and produce comparable quality at the bitrates used.
-- Audio synthesis is done in a background thread and typically completes well
-  before video encoding finishes.
+- Render time is dominated by GPU shader throughput and the video encoder.
+- **Half-float post + CPU pack** avoids blown-out frames on some Windows
+  drivers but moves more pixels through the CPU than an ideal RGB8 readback.
+- TurboPipe reduces overhead piping packed frames to ffmpeg; without it,
+  synchronous `write()` is used.
+- Hardware encoders (NVENC/AMF/QSV) are usually much faster than `libx264`.
+- Audio synthesis runs in a background thread and is written in 10 s chunks.
 
 ---
 

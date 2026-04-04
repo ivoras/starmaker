@@ -41,7 +41,9 @@ def run(cfg: Config) -> None:
                     return
                 print("[audio] Synthesising audio...", flush=True)
                 from starmaker.audio import AudioSynth
-                synth = AudioSynth(cfg.duration, cfg.seed)
+                synth = AudioSynth(
+                    cfg.duration, cfg.seed, cfg.engine_freq_scale,
+                )
                 audio_chunks = [0]
                 total_audio_chunks = [1]
 

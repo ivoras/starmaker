@@ -2,43 +2,48 @@ Build a Python CLI tool that uses moderngl (GPU shaders) to render a procedural 
 
 # Rules
 
-Update AGENTS.md after every feature change.
+Update AGENTS.md and README.md after every feature change.
 
 # Rendering
 
 ### Rendering Pipeline (moderngl + GLSL)
 
-Three composited shader passes rendered to FBOs, streamed frame-by-frame:
+Four passes to float (or mixed) FBOs, then packed RGB8 for ffmpeg:
 
-1. **Nebula Background Pass** -- Full-screen fragment shader using fractal Brownian motion (fBm) over fast-computed 3D noise. Multiple octaves (5-6) with absolute-value turbulence for filamentary nebula structure. Color palette driven by power functions on luminance, giving rich purples, blues, teals, and warm oranges. Slowly evolves over time via animated noise coordinates. Reference implementation: the [nebula.glsl from Processing-Shader-Examples](https://github.com/genekogan/Processing-Shader-Examples/blob/master/ColorShaders/data/nebula.glsl) which combines dual-surface noise with rotation for organic motion.
-2. **Starfield + Warp Streaks Pass** -- Stars placed procedurally via `sin(i) * scale` positioning (no RNG needed in shader). Each star's Z-depth cycles with `mod(i*i - speed*time, max_depth)` creating continuous parallax fly-through. Near stars streak into elongated lines via distance-based glow falloff with directional bias. Alpha-composited over nebula layer.
-3. **Post-Processing Pass** -- Reads the composited texture and applies: subtle bloom (bright star bleed), vignette darkening at edges, film grain noise, and overall color grading (slight blue/cyan tint shift for "cold space" feel).
+1. **Nebula** (`nebula.frag`) — fBm noise, masked clouds, dark base + coloured emission. Outputs **float16** RGB; no upper clamp so bright regions stay in HDR until composite tonemaps.
+2. **Starfield** (`starfield.frag`) — Procedural star field with perspective depth cycling and warp streaks; additive-style RGB accumulation (can exceed 1.0 before composite). **Float16** RGBA.
+3. **Composite** (`composite.frag`) — Adds nebula + stars (+ optional dust). **Tonemap:** `combined / (1 + combined)` per channel so the sum does not clip to white before post. Output **float16** RGB.
+4. **Post** (`post.frag`) — Bloom, vignette, grain, colour grade, gamma. Renders into **half-float RGB** (not normalized RGB8).
 
-All noise functions will be implemented directly in GLSL (fast-computed noise, no texture lookups) for maximum GPU performance.
+**Readback / Windows colour bug:** On some Windows GL stacks, **RGB8** colour attachments quantize almost any non-zero fragment to 255 (flat white). The post pass therefore uses **RGB16F**, then the CPU converts to RGB8 for ffmpeg (`renderer._pack_post_half_to_rgb8`). That path is slower than a single `read_into` of RGB8 but is required for correct output.
+
+**TurboPipe ordering:** The buffer that will receive `read_into` must be **`sync`ed before** `render_frame` fills it—otherwise an async pipe from the previous frame can still be reading that buffer while the GPU overwrites it (`peek_output_buffer` → `sync_buffer` → `render_frame` → `write_frame` in `orchestrator.py`).
+
+All noise in nebula/star/composite shaders is computed in GLSL without texture lookups where possible.
 
 ### Frame Encoding Pipeline
 
-- **moderngl** creates a standalone context (`create_context(standalone=True)`) with an FBO at the target resolution
-- **TurboPipe** (`pip install turbopipe`) transfers rendered buffer data to ffmpeg stdin with zero-copy, non-blocking writes
-- **ffmpeg** subprocess launched with: `-f rawvideo -pix_fmt rgb24 -s WxH -r FPS -i pipe:` on input, and codec selection logic:
-  - Try `h264_nvenc` (NVIDIA), `h264_amf` (AMD), `h264_qsv` (Intel) in order
-  - Fall back to `libx264` (software) with `-preset medium`
-  - Output as MP4 with `-movflags +faststart`
-- Double-buffered: two moderngl buffers alternate between rendering and piping
+- **moderngl** standalone context, target resolution FBOs as above.
+- **TurboPipe** (`pip install turbopipe`): zero-copy, non-blocking writes from the packed RGB8 buffer to ffmpeg stdin. Falls back to synchronous `stdin.write` if TurboPipe is missing.
+- **ffmpeg** raw input: `-f rawvideo -pix_fmt rgb24 -s WxH -r FPS -i pipe:0`.
+- **Encoder probe order:** `h264_nvenc` → `h264_amf` → `h264_qsv`, then `libx264`. Probing uses a **128×128** raw frame (AMF rejects very small sizes such as 32×32 on some drivers).
+- Output: MP4, `-movflags +faststart`, hardware-specific quality flags in `encoder.py`.
 
 ### Audio Synthesis (numpy + scipy)
 
-Generated as a WAV file, then muxed into the final video. Components:
+Generated as **44.1 kHz stereo 16-bit WAV** in **10-second chunks**, then muxed into the final video.
 
+**Engine frequency scale** (`Config.engine_freq_scale`, CLI `--engine-freq-scale`, default **0.7**): multiplies all “engine layer” pitches—drone partials (nominal 55 / 82.5 / 110 / 165 Hz at scale 1.0), sub-bass (30 Hz), warp carriers and chorus (220 / 330 / 220.7 / 329.3 Hz), the engine pink-noise bandpass edges, and the warp FM wobble depth. **1.0** restores the original nominal tuning. Range validated **0.25–2.5**.
 
-| Layer              | Technique                                                                                                                                     |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Engine drone**   | Sum of sine waves at 55, 82.5, 110, 165 Hz with slow LFO amplitude modulation (0.03-0.08 Hz). Pink noise filtered through 40-200 Hz bandpass. |
-| **Warp hum**       | Higher sine waves at 220, 330 Hz with chorus effect (slight detuning copies). Slow frequency wobble via sinusoidal FM.                        |
-| **Sub-bass pulse** | 30 Hz sine with rhythmic amplitude envelope (period ~4-8s), gives a "throbbing engine" feel.                                                  |
-| **Blips**          | Poisson-distributed events (avg every 15-45s). Each is a short (50-200ms) sine chirp (800-2000 Hz) with exponential decay envelope.           |
-| **Clicks**         | More frequent random events (avg every 5-15s). Very short (5-20ms) filtered noise bursts.                                                     |
-| **Ambient pad**    | Very quiet filtered white noise through a narrow bandpass (300-600 Hz), gives "air circulation" texture.                                      |
+**Chunk continuity:** Stereo uses a **3-sample Haas delay** on the right channel with a **persistent tail** across chunk boundaries (fixing clicks at multiples of 10 s). **Soft limiting** uses `tanh` (no per-chunk peak normalisation that would jump gain at chunk edges). **Warp hum** uses integrated instantaneous frequency for FM carriers and separate `_sine_chunk` phases for detuned chorus lines.
 
+| Layer | Technique |
+| ----- | --------- |
+| **Engine drone** | Scaled partials + LFO AM; pink noise through scaled bandpass (StatefulFilter across chunks). |
+| **Warp hum** | Scaled 220/330 Hz carriers + FM wobble (scaled); chorus at scaled detuned frequencies. |
+| **Sub-bass** | Scaled ~30 Hz sine + rhythmic envelope (StatefulFilter phase for LFO). |
+| **Ambient pad** | 300–600 Hz bandpass white noise (StatefulFilter). |
+| **Blips** | Poisson events (~15–45 s); sine chirp 800–2000 Hz, decay envelope. |
+| **Clicks** | Poisson events (~5–15 s); short noise bursts. |
 
-All layers mixed and normalized. Sample rate: 44100 Hz, 16-bit. The random seed controls all event timing.
+Blips/clicks/pad are **not** scaled by `engine_freq_scale`. Seed controls schedules and phases.

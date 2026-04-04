@@ -4,12 +4,11 @@ Generates a WAV file entirely from numpy/scipy DSP.  No samples or external
 assets required.  The output layers six sonic components into a convincingly
 spaceship-like ambient soundscape:
 
-  1. Engine drone      – Low sine fundamentals (55, 82.5, 110, 165 Hz) with
-                         slow LFO amplitude modulation and pink-noise fill.
-  2. Warp hum          – Mid harmonics (220, 330 Hz) with chorus detuning and
-                         slow FM wobble for a "warp coil" texture.
-  3. Sub-bass pulse    – 30 Hz sine with a rhythmic amplitude envelope,
-                         giving a visceral engine throb.
+  1. Engine drone      – Low sine fundamentals (defaults ~55–165 Hz, scaled by
+                         engine_freq_scale) with LFO amplitude modulation and
+                         pink-noise bandpass fill.
+  2. Warp hum          – Mid harmonics (~220 / 330 Hz scaled) with chorus and FM.
+  3. Sub-bass pulse    – ~30 Hz sine (scaled) with a rhythmic amplitude envelope.
   4. Ambient pad       – Narrow-bandpass filtered white noise (300–600 Hz)
                          for an "air circulation" underpinning.
   5. Blips             – Poisson-distributed sine chirps (800–2000 Hz, 50–200 ms)
@@ -101,14 +100,38 @@ class _StatefulFilter:
 class AudioSynth:
     """Generates the full audio stream in CHUNK_SECONDS-sized chunks."""
 
-    def __init__(self, duration: float, seed: int) -> None:
+    def __init__(
+        self,
+        duration: float,
+        seed: int,
+        engine_freq_scale: float = 0.7,
+    ) -> None:
         self.duration = duration
         self.total_samples = int(duration * SAMPLE_RATE)
         self.rng = np.random.default_rng(seed)
         self._py_rng = random.Random(seed)
+        self._k = float(engine_freq_scale)
+
+        # Engine-layer frequencies (reference design at k=1.0)
+        k = self._k
+        self._drone_partials: list[tuple[float, float]] = [
+            (55.0 * k, 0.35),
+            (82.5 * k, 0.25),
+            (110.0 * k, 0.15),
+            (165.0 * k, 0.08),
+        ]
+        self._warp_220 = 220.0 * k
+        self._warp_330 = 330.0 * k
+        self._warp_220_ch = 220.7 * k
+        self._warp_330_ch = 329.3 * k
+        self._sub_hz = 30.0 * k
 
         # Stateful filters (maintain continuity across chunks)
-        self._drone_bp  = _StatefulFilter(_butter_bandpass(40, 200, SAMPLE_RATE))
+        bp_lo = max(8.0, 40.0 * k)
+        bp_hi = min(float(SAMPLE_RATE) * 0.45, max(bp_lo * 1.5, 200.0 * k))
+        self._drone_bp = _StatefulFilter(
+            _butter_bandpass(bp_lo, bp_hi, SAMPLE_RATE)
+        )
         self._pad_bp    = _StatefulFilter(_butter_bandpass(300, 600, SAMPLE_RATE, order=2))
 
         # Pre-compute all event schedules (blips + clicks) upfront
@@ -119,9 +142,12 @@ class AudioSynth:
         self._sample_offset = 0
 
         # Persistent phases for oscillators (avoids discontinuities at chunk boundaries)
-        self._drone_phase = {f: 0.0 for f in (55.0, 82.5, 110.0, 165.0,
-                                                220.0, 330.0, 30.0,
-                                                220.7, 329.3)}
+        _phase_freqs = (
+            [f for f, _ in self._drone_partials]
+            + [self._warp_220, self._warp_330, self._sub_hz,
+               self._warp_220_ch, self._warp_330_ch]
+        )
+        self._drone_phase = {f: 0.0 for f in _phase_freqs}
         self._lfo_phases = {
             "drone_amp":  self._py_rng.uniform(0, 2 * math.pi),
             "warp_freq":  self._py_rng.uniform(0, 2 * math.pi),
@@ -152,13 +178,9 @@ class AudioSynth:
 
     def _engine_drone(self, n: int, chunk_start: int) -> np.ndarray:
         """Low-frequency engine drone: filtered sines + pink noise bandpass."""
-        # Fundamental harmonics
-        sig = (
-            self._sine_chunk(55.0, n) * 0.35 +
-            self._sine_chunk(82.5, n) * 0.25 +
-            self._sine_chunk(110.0, n) * 0.15 +
-            self._sine_chunk(165.0, n) * 0.08
-        )
+        sig = np.zeros(n, dtype=np.float32)
+        for freq, weight in self._drone_partials:
+            sig += self._sine_chunk(freq, n) * weight
         # LFO amplitude modulation (slow breathing)
         lfo_phase = self._lfo_phases["drone_amp"]
         lfo_freq = 0.05  # 20s period
@@ -178,24 +200,23 @@ class AudioSynth:
         warp_lfo = _lfo(warp_lfo_freq, n, warp_phase)
         self._lfo_phases["warp_freq"] = (warp_phase + 2 * math.pi * warp_lfo_freq * n / SAMPLE_RATE) % (2 * math.pi)
 
-        # Wobble ±2 Hz around 220 and 330 — integrate instantaneous frequency so
-        # phase matches at chunk boundaries (constant 220 Hz step was wrong).
-        freq_wobble = warp_lfo * 4.0 - 2.0  # -2 .. +2 Hz
-        p1 = self._drone_phase[220.0]
-        p2 = self._drone_phase[330.0]
-        inst1 = 220.0 + freq_wobble
-        inst2 = 330.0 + freq_wobble * 0.5
+        # Wobble (Hz) scales with engine pitch so timbre stays coherent.
+        wobble = (warp_lfo * 4.0 - 2.0) * self._k
+        p1 = self._drone_phase[self._warp_220]
+        p2 = self._drone_phase[self._warp_330]
+        inst1 = self._warp_220 + wobble
+        inst2 = self._warp_330 + wobble * 0.5
         dphi = 2.0 * math.pi / SAMPLE_RATE
         phase1 = p1 + np.cumsum(inst1 * dphi)
         phase2 = p2 + np.cumsum(inst2 * dphi)
         carrier1 = np.sin(phase1).astype(np.float32)
         carrier2 = np.sin(phase2).astype(np.float32)
-        self._drone_phase[220.0] = float(phase1[-1] % (2 * math.pi))
-        self._drone_phase[330.0] = float(phase2[-1] % (2 * math.pi))
+        self._drone_phase[self._warp_220] = float(phase1[-1] % (2 * math.pi))
+        self._drone_phase[self._warp_330] = float(phase2[-1] % (2 * math.pi))
 
         # Chorus at true detuned rates (separate phase state, not 220 Hz step)
-        chorus1 = self._sine_chunk(220.7, n)
-        chorus2 = self._sine_chunk(329.3, n)
+        chorus1 = self._sine_chunk(self._warp_220_ch, n)
+        chorus2 = self._sine_chunk(self._warp_330_ch, n)
         return ((carrier1 + carrier2) * 0.12 + (chorus1 + chorus2) * 0.04).astype(np.float32)
 
     def _sub_bass(self, n: int) -> np.ndarray:
@@ -206,7 +227,7 @@ class AudioSynth:
         sub_lfo = _lfo(sub_lfo_freq, n, sub_phase)
         self._lfo_phases["sub_amp"] = (sub_phase + 2 * math.pi * sub_lfo_freq * n / SAMPLE_RATE) % (2 * math.pi)
         env = sub_lfo ** 3.0  # exponential shape for punchy throb
-        sig = self._sine_chunk(30.0, n)
+        sig = self._sine_chunk(self._sub_hz, n)
         return (sig * env * 0.20).astype(np.float32)
 
     def _ambient_pad(self, n: int) -> np.ndarray:

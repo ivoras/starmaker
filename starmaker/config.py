@@ -34,6 +34,8 @@ class Config:
 
     # Audio
     no_audio: bool = False
+    # Multiplier for engine-layer pitch (drone partials, sub throb, warp hum); <1 deepens.
+    engine_freq_scale: float = 0.7
 
     # ------------------------------------------------------------------ #
 
@@ -65,3 +67,5 @@ class Config:
             raise ValueError("dust-amount must be between 0.0 and 2.0.")
         if self.encoder not in ("auto", "nvenc", "amf", "qsv", "x264"):
             raise ValueError("encoder must be one of: auto, nvenc, amf, qsv, x264.")
+        if not (0.25 <= self.engine_freq_scale <= 2.5):
+            raise ValueError("engine-freq-scale must be between 0.25 and 2.5.")
