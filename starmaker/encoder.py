@@ -128,7 +128,7 @@ def _build_ffmpeg_cmd(
         "-s", f"{width}x{height}",
         "-r", str(fps),
         "-i", "pipe:0",
-        "-b:v", "8M",
+        "-b:v", "12M",
         "-vcodec", codec,
     ]
 
@@ -146,6 +146,7 @@ def _build_ffmpeg_cmd(
         "-movflags", "+faststart",
         output,
     ]
+    print(cmd)
     return cmd
 
 
@@ -244,7 +245,7 @@ def mux_audio(
         "-i", audio_path,
         "-c:v", "copy",
         "-c:a", "aac",
-        "-b:a", "192k",
+        "-b:a", "96k",
         "-shortest",
         "-movflags", "+faststart",
         output_path,
