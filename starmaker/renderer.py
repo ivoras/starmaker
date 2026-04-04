@@ -29,6 +29,7 @@ from typing import Iterator
 import moderngl
 import numpy as np
 
+from starmaker.comets import build_comet_events, comet_overlay_uniforms
 from starmaker.config import Config
 
 
@@ -124,6 +125,8 @@ class Renderer:
 
         # Cache the seed as a float uniform value
         self._seed_f = float(cfg.seed % 100000)
+        self._comet_events = build_comet_events(cfg.seed, cfg.duration, cfg.comet_rate)
+        self._aspect_wh = float(w) / float(h)
 
         # Set static uniforms
         self._set_static_uniforms()
@@ -217,6 +220,13 @@ class Renderer:
             self._prog_post["u_scene"].value = 0
         if "u_time" in self._prog_post:
             self._prog_post["u_time"].value = t
+        if "u_comet_strength" in self._prog_post:
+            cs, hu, hv, du, dv = comet_overlay_uniforms(
+                self._comet_events, t, self._aspect_wh
+            )
+            self._prog_post["u_comet_strength"].value = cs
+            self._prog_post["u_comet_head"].value = (hu, hv)
+            self._prog_post["u_comet_dir"].value = (du, dv)
         self._vao_post.render(moderngl.TRIANGLE_STRIP)
 
         # -- Readback into double-buffered output ---------------------------

@@ -35,6 +35,7 @@ Examples:
   starmaker -r 3840x2160 --fps 60 -d 3600            # 4K 60fps 1-hour
   starmaker --seed 42 --nebula-intensity 2.0         # vivid nebulas, reproducible
   starmaker --encoder nvenc -d 14400                 # force NVIDIA hardware encoding
+  starmaker --comet-rate 2 -d 120                    # ~2 comet flybys/hour + whoosh
 """,
     )
 
@@ -129,6 +130,14 @@ Examples:
         help="Engine audio pitch scale [0.25-2.5]: <1 lowers drone/sub/warp "
         "frequencies (default: 0.7)",
     )
+    p.add_argument(
+        "--comet-rate",
+        type=float,
+        default=0.0,
+        metavar="N",
+        help="Comet flybys per hour (0 disables). Each flyby syncs a whoosh in audio "
+        "[0-24] (default: 0)",
+    )
 
     return p
 
@@ -157,6 +166,7 @@ def main(argv: list[str] | None = None) -> None:
         encoder=args.encoder,
         no_audio=args.no_audio,
         engine_freq_scale=args.engine_freq_scale,
+        comet_rate=args.comet_rate,
     )
 
     try:
@@ -169,7 +179,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  nebula_intensity={cfg.nebula_intensity}  nebula_scale={cfg.nebula_scale}")
     print(f"  warp_speed={cfg.warp_speed}  star_density={cfg.star_density}  "
           f"dust_amount={cfg.dust_amount}")
-    print(f"  engine_freq_scale={cfg.engine_freq_scale}  "
+    print(f"  engine_freq_scale={cfg.engine_freq_scale}  comet_rate={cfg.comet_rate}  "
           f"encoder={cfg.encoder}  output={cfg.output}")
 
     from starmaker.orchestrator import run

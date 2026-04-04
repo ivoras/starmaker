@@ -24,11 +24,13 @@ Everything is deterministic: given the same `--seed`, the output is identical.
 - **Hardware-accelerated encoding** — Automatically tries NVENC (NVIDIA), AMF
   (AMD), QSV (Intel) before falling back to `libx264`. Zero-copy frame
   transfer via [TurboPipe](https://github.com/BrokenSource/TurboPipe).
-- **Procedural audio** — Six synthesised layers: engine drone, warp hum,
-  sub-bass throb, ambient pad, panel blips, and clicks. Engine-related pitches
-  are scaled by `--engine-freq-scale` (default lowers the engine vs nominal
-  1.0). Chunk boundaries are smoothed (stereo delay + soft limiter) to avoid
-  clicks every 10 seconds.
+- **Procedural audio** — Engine drone, warp hum, sub-bass throb, ambient pad,
+  panel blips, clicks, and optional **comet whooshes** (`--comet-rate`). Engine
+  pitches use `--engine-freq-scale`. Chunk boundaries use stereo delay + soft
+  limiter to avoid periodic clicks.
+- **Comet flybys** — `--comet-rate` sets expected flybys per hour (0 = off).
+  `comets.py` schedules events from the seed; the post shader draws an additive
+  streak, and audio plays a synced band-pass noise + down-chirp whoosh.
 - **4-hour default** — Designed for long ambient sessions. A typical 1080p
   4-hour encode time depends on GPU and encoder; half-float readback adds some
   overhead vs a direct RGB8 path.
@@ -105,6 +107,9 @@ starmaker -r 3840x2160 --fps 60 -d 3600 -o space_4k.mp4
 
 # Silent video, force NVIDIA encoder
 starmaker --no-audio --encoder nvenc -o silent.mp4
+
+# Occasional comets (~3/hour) with matched whoosh in audio
+starmaker --comet-rate 3 -d 300 -o comets.mp4
 ```
 
 ---
@@ -125,6 +130,7 @@ starmaker --no-audio --encoder nvenc -o silent.mp4
 | `--warp-speed` | `1.0` | Fly-through speed \[0.1–5.0\] |
 | `--dust-amount` | `0.08` | Foreground dust density \[0.0–2.0\] |
 | `--engine-freq-scale` | `0.7` | Engine audio pitch multiplier \[0.25–2.5\]; `<1` lowers drone/sub/warp |
+| `--comet-rate` | `0` | Comet flybys per hour \[0–24\]; 0 disables (video + whoosh stay in sync) |
 | `--encoder` | `auto` | `auto` \| `nvenc` \| `amf` \| `qsv` \| `x264` |
 | `--no-audio` | off | Skip audio synthesis |
 
@@ -134,6 +140,7 @@ starmaker --no-audio --encoder nvenc -o silent.mp4
 
 ```
 cli.py ──► orchestrator.py
+              ├── comets.py    (deterministic schedule + geometry)
               ├── renderer.py  (ModernGL + GLSL shaders)
               │     shaders/
               │       quad.vert         shared full-screen quad
@@ -169,6 +176,7 @@ cli.py ──► orchestrator.py
 | Ambient pad | 300–600 Hz | Not scaled by engine flag |
 | Blips | 800–2000 Hz | Poisson-timed chirps |
 | Clicks | broadband | Poisson-timed noise bursts |
+| Comet whoosh | ~260–4500 Hz noise + down-chirp | When `--comet-rate` > 0; aligned with `comets.py` schedule |
 
 ---
 

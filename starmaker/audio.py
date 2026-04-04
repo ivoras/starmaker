@@ -15,6 +15,8 @@ spaceship-like ambient soundscape:
                          with exponential decay envelopes.
   6. Clicks            – More frequent short filtered-noise bursts (5–20 ms)
                          imitating instrument panel transients.
+  7. Comet whoosh      – Optional (``--comet-rate``): band-pass noise + down-chirp,
+                         timed to match on-screen comet flybys (see ``comets.py``).
 
 All timing and frequencies seeded by the integer seed for reproducibility.
 Audio is written as a 44100 Hz stereo 16-bit PCM WAV file in chunks to
@@ -32,6 +34,8 @@ from typing import Generator
 
 import numpy as np
 from scipy.signal import butter, sosfilt, sosfilt_zi
+
+from starmaker.comets import build_comet_events
 
 SAMPLE_RATE = 44100
 CHUNK_SECONDS = 10       # synthesise and write in 10-second chunks
@@ -83,6 +87,32 @@ def _lfo(freq: float, n_samples: int, phase: float = 0.0) -> np.ndarray:
     return 0.5 + 0.5 * _sine(freq, n_samples, phase)
 
 
+def _comet_whoosh_waveform(seed: int, index: int, n_samples: int) -> np.ndarray:
+    """One-shot whoosh aligned with a comet flyby (same schedule as ``comets.py``)."""
+    if n_samples < 64:
+        return np.zeros(0, dtype=np.float32)
+    rng = np.random.default_rng(
+        np.uint32((seed + 0x7F5FA000) ^ (index * 0xC001C001))
+    )
+    wn = rng.standard_normal(n_samples).astype(np.float64)
+    sos = _butter_bandpass(260.0, 4500.0, SAMPLE_RATE, order=4)
+    bp = sosfilt(sos, wn).astype(np.float32)
+    u = np.linspace(0.0, 1.0, n_samples, dtype=np.float64)
+    env = (np.sin(np.pi * u) ** 2.1).astype(np.float32)
+    t = np.arange(n_samples, dtype=np.float64) / SAMPLE_RATE
+    dur = max(float(t[-1]), 1e-6)
+    f0, f1 = 900.0, 280.0
+    phase = 2 * math.pi * (f0 * t + 0.5 * (f1 - f0) / dur * t * t)
+    tone = np.sin(phase).astype(np.float32) * env * 0.1
+    w = bp * env * 0.36 + tone
+    peak = float(np.max(np.abs(w))) + 1e-9
+    if peak > 0.82:
+        w *= 0.82 / peak
+    # Quiet under engine bed; scaled with product of prior reductions
+    w *= 0.1
+    return w.astype(np.float32)
+
+
 # ---- Layer synthesisers ---------------------------------------------------
 
 class _StatefulFilter:
@@ -105,6 +135,7 @@ class AudioSynth:
         duration: float,
         seed: int,
         engine_freq_scale: float = 0.7,
+        comet_rate: float = 0.0,
     ) -> None:
         self.duration = duration
         self.total_samples = int(duration * SAMPLE_RATE)
@@ -156,6 +187,17 @@ class AudioSynth:
 
         # Last 3 mono samples for stereo Haas delay across chunk boundaries
         self._stereo_prev_tail: np.ndarray | None = None
+
+        # Comet whooshes: (start_sample, waveform) built once; matches renderer schedule
+        self._comet_layers: list[tuple[int, np.ndarray]] = []
+        if comet_rate > 0.0:
+            for i, ev in enumerate(build_comet_events(seed, duration, comet_rate)):
+                # Compact whoosh: ~39% of flyby length (was 0.3×, +30% duration)
+                ns = int(ev.duration * SAMPLE_RATE * 0.39)
+                if ns <= 0:
+                    continue
+                wave = _comet_whoosh_waveform(seed, i, ns)
+                self._comet_layers.append((int(ev.t_start * SAMPLE_RATE), wave))
 
     def _schedule_events(self, avg_lo: float, avg_hi: float) -> list[int]:
         """Generate sorted list of sample indices for Poisson-distributed events."""
@@ -278,6 +320,20 @@ class AudioSynth:
         sig += self._ambient_pad(n)
         self._inject_event(sig, self._blip_times, chunk_start, "blip")
         self._inject_event(sig, self._click_times, chunk_start, "click")
+
+        for s0, wdata in self._comet_layers:
+            if wdata.size == 0:
+                continue
+            end = s0 + len(wdata)
+            if end <= chunk_start or s0 >= chunk_start + n:
+                continue
+            a0 = max(chunk_start, s0)
+            a1 = min(chunk_start + n, end)
+            src_lo = a0 - s0
+            src_hi = a1 - s0
+            dst_lo = a0 - chunk_start
+            dst_hi = a1 - chunk_start
+            sig[dst_lo:dst_hi] += wdata[src_lo:src_hi]
 
         # Soft limit (no per-chunk gain division). Independent peak normalisation
         # per CHUNK_SECONDS made the global level jump at each chunk edge → clicks.

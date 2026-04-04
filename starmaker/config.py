@@ -37,6 +37,9 @@ class Config:
     # Multiplier for engine-layer pitch (drone partials, sub throb, warp hum); <1 deepens.
     engine_freq_scale: float = 0.7
 
+    # Comet flybys (video + synced whoosh). Expected events per hour; 0 = disabled.
+    comet_rate: float = 0.0
+
     # ------------------------------------------------------------------ #
 
     @property
@@ -69,3 +72,5 @@ class Config:
             raise ValueError("encoder must be one of: auto, nvenc, amf, qsv, x264.")
         if not (0.25 <= self.engine_freq_scale <= 2.5):
             raise ValueError("engine-freq-scale must be between 0.25 and 2.5.")
+        if not (0.0 <= self.comet_rate <= 24.0):
+            raise ValueError("comet-rate must be between 0.0 and 24.0 (events per hour).")

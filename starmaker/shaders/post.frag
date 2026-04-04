@@ -13,6 +13,11 @@ uniform sampler2D u_scene;
 uniform float     u_time;
 uniform vec2      u_resolution;
 
+// Optional comet flyby (additive streak, linear before gamma)
+uniform float u_comet_strength;
+uniform vec2  u_comet_head;   // UV bottom-left
+uniform vec2  u_comet_dir;    // unit direction in pixel space (x scaled by aspect)
+
 out vec4 fragColor;
 
 // ---- Helpers --------------------------------------------------------
@@ -93,8 +98,24 @@ void main() {
     vec3 curved = smoothstep(0.02, 0.88, col);
     col = mix(col, curved, 0.08);
 
-    // Tone mapping already applied in composite.frag; second Reinhard here
-    // crushed bright HDR and made the frame a flat near-white sheet.
+    // Comet: small head + short ion tail along motion (linear add)
+    if (u_comet_strength > 0.001) {
+        vec2 px = gl_FragCoord.xy;
+        vec2 head_px = u_comet_head * u_resolution;
+        vec2 d = px - head_px;
+        float along = dot(d, u_comet_dir);
+        float perp2 = max(dot(d, d) - along * along, 0.0);
+        float perp = sqrt(perp2);
+        float w = u_resolution.y * 0.0042;
+        float head_blob = exp(-(perp * perp) / (w * w))
+            * smoothstep(-w * 1.2, w * 2.2, along);
+        float tail_len = max(u_resolution.y * 0.0275, 1.0);
+        float tail = max(0.0, -along);
+        float tail_glow = exp(-(perp * perp) / (w * w * 2.2))
+            * exp(-tail / tail_len) * smoothstep(0.0, w * 0.35, tail);
+        vec3 ccol = vec3(0.72, 0.84, 1.08) * (head_blob + tail_glow * 0.38);
+        col += ccol * u_comet_strength;
+    }
 
     // Gamma correction: convert from linear to gamma 2.2
     col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
