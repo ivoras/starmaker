@@ -1,4 +1,4 @@
-Build a Python CLI tool that uses moderngl (GPU shaders) to render a procedural "warp through space" video with nebulas and starfields, pipes frames via TurboPipe to ffmpeg for hardware-accelerated encoding, and synthesizes ASMR-like spaceship audio with numpy/scipy.
+Build a Python CLI tool that uses moderngl (GPU shaders) to render a procedural "warp through space" video with nebulas and starfields, pipes frames via TurboPipe to ffmpeg for hardware-accelerated encoding, and synthesizes ASMR-like spaceship audio with numpy/scipy. Using Python 3.14.
 
 # Rules
 
