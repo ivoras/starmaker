@@ -101,6 +101,10 @@ def run(cfg: Config) -> None:
             buf = renderer.peek_output_buffer()
             enc.sync_buffer(buf)  # before read_into: encoder must finish prior TurboPipe read
             buf = renderer.render_frame(frame_idx)
+            # The dtype='f1' readback does all work in a single ModernGL C call
+            # that holds the GIL.  Yield briefly so the audio thread can run.
+            if not audio_ready.is_set():
+                time.sleep(0)
             enc.write_frame(buf)
             progress.update(frame_idx + 1)
 
