@@ -10,6 +10,7 @@ uniform float u_time;          // seconds since start
 uniform vec2  u_resolution;    // viewport size (pixels)
 uniform float u_nebula_intensity; // 0.0 – 3.0
 uniform float u_nebula_scale;    // 0.1 – 5.0
+uniform float u_nebula_color_cycle_period; // seconds; full cycle through 3 palettes
 uniform float u_seed;            // float derived from integer seed
 
 out vec4 fragColor;
@@ -64,12 +65,41 @@ void main() {
     float mask = smoothstep(0.50, 0.78, density);
 
     vec3 base_space = vec3(0.003, 0.005, 0.012);
-    vec3 cool = vec3(0.16, 0.32, 0.72);
-    vec3 magenta = vec3(0.56, 0.14, 0.64);
-    vec3 warm = vec3(0.95, 0.46, 0.18);
+
+    // Three palettes (cool / mid / warm accent), cross-faded on a slow clock
+    float period = max(u_nebula_color_cycle_period, 1.0);
+    float t3 = fract(u_time / period) * 3.0;
+
+    vec3 p0_cool = vec3(0.12, 0.08, 0.42);
+    vec3 p0_mid  = vec3(0.52, 0.14, 0.62);
+    vec3 p0_warm = vec3(0.82, 0.22, 0.58);
+
+    vec3 p1_cool = vec3(0.20, 0.07, 0.03);
+    vec3 p1_mid  = vec3(0.68, 0.32, 0.06);
+    vec3 p1_warm = vec3(0.92, 0.52, 0.10);
+
+    vec3 p2_cool = vec3(0.03, 0.14, 0.06);
+    vec3 p2_mid  = vec3(0.28, 0.58, 0.10);
+    vec3 p2_warm = vec3(0.65, 0.06, 0.12);
+
+    vec3 ca, cb, ma, mb, wa, wb;
+    float blend;
+    if (t3 < 1.0) {
+        ca = p0_cool; cb = p1_cool; ma = p0_mid; mb = p1_mid;
+        wa = p0_warm; wb = p1_warm; blend = t3;
+    } else if (t3 < 2.0) {
+        ca = p1_cool; cb = p2_cool; ma = p1_mid; mb = p2_mid;
+        wa = p1_warm; wb = p2_warm; blend = t3 - 1.0;
+    } else {
+        ca = p2_cool; cb = p0_cool; ma = p2_mid; mb = p0_mid;
+        wa = p2_warm; wb = p0_warm; blend = t3 - 2.0;
+    }
+    vec3 cool = mix(ca, cb, blend);
+    vec3 midc = mix(ma, mb, blend);
+    vec3 warm = mix(wa, wb, blend);
 
     float hue_mix = smoothstep(0.30, 0.75, n2);
-    vec3 nebula_colour = mix(cool, magenta, hue_mix);
+    vec3 nebula_colour = mix(cool, midc, hue_mix);
     nebula_colour = mix(nebula_colour, warm, smoothstep(0.72, 0.92, density) * 0.35);
 
     float inner_glow = smoothstep(0.58, 0.92, density);

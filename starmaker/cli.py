@@ -8,6 +8,29 @@ import random
 from starmaker.config import Config
 
 
+def _parse_duration_seconds(value: str) -> float:
+    """Parse a duration: plain seconds, or suffix ``m`` (minutes), ``h`` (hours)."""
+    s = value.strip().lower().replace(" ", "")
+    if not s:
+        raise argparse.ArgumentTypeError("Duration must not be empty.")
+    mult = 1.0
+    if len(s) > 1 and s[-1] in "hm":
+        unit = s[-1]
+        s = s[:-1]
+        if not s:
+            raise argparse.ArgumentTypeError(f"Invalid duration: {value!r}")
+        mult = 3600.0 if unit == "h" else 60.0
+    try:
+        n = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"Invalid duration number in {value!r}"
+        ) from None
+    if n < 0:
+        raise argparse.ArgumentTypeError("Duration must be non-negative.")
+    return n * mult
+
+
 def _parse_resolution(value: str) -> tuple[int, int]:
     parts = value.lower().replace("x", " ").replace("×", " ").split()
     if len(parts) != 2:
@@ -31,11 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples:
   starmaker                                          # 4-hour 1080p with defaults
-  starmaker -d 60 -o preview.mp4                    # 1-minute preview
-  starmaker -r 3840x2160 --fps 60 -d 3600            # 4K 60fps 1-hour
+  starmaker -d 1m -o preview.mp4                     # 1-minute preview
+  starmaker -r 3840x2160 --fps 60 -d 1h              # 4K 60fps 1-hour
   starmaker --seed 42 --nebula-intensity 2.0         # vivid nebulas, reproducible
-  starmaker --encoder nvenc -d 14400                 # force NVIDIA hardware encoding
-  starmaker --comet-rate 2 -d 120                    # ~2 comet flybys/hour + whoosh
+  starmaker --encoder nvenc -d 4h                    # force NVIDIA hardware encoding
+  starmaker --comet-rate 2 -d 2m                     # ~2 comet flybys/hour + whoosh
 """,
     )
 
@@ -59,10 +82,11 @@ Examples:
     )
     p.add_argument(
         "-d", "--duration",
-        type=float,
-        default=14400.0,
-        metavar="SECONDS",
-        help="Video duration in seconds (default: 14400 = 4 hours)",
+        type=_parse_duration_seconds,
+        default=_parse_duration_seconds("4h"),
+        metavar="T",
+        help="Video duration: seconds, or suffix m (minutes) or h (hours); "
+        "default 4h",
     )
     p.add_argument(
         "-s", "--seed",
@@ -96,6 +120,14 @@ Examples:
         default=1.0,
         metavar="F",
         help="Nebula feature size [0.1-5.0] (default: 1.0)",
+    )
+    p.add_argument(
+        "--nebula-color-cycle-period",
+        type=_parse_duration_seconds,
+        default=_parse_duration_seconds("30m"),
+        metavar="T",
+        help="Time for nebula to cycle purple-magenta -> orange-brown -> "
+        "green-red (seconds, or m/h suffix; default 30m)",
     )
     p.add_argument(
         "--warp-speed",
@@ -161,6 +193,7 @@ def main(argv: list[str] | None = None) -> None:
         star_size=args.star_size,
         nebula_intensity=args.nebula_intensity,
         nebula_scale=args.nebula_scale,
+        nebula_color_cycle_period=args.nebula_color_cycle_period,
         warp_speed=args.warp_speed,
         dust_amount=args.dust_amount,
         encoder=args.encoder,
@@ -176,7 +209,8 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"Starmaker - seed={cfg.seed}, {cfg.width}x{cfg.height} @ {cfg.fps}fps, "
           f"{cfg.duration:.0f}s ({cfg.total_frames} frames)")
-    print(f"  nebula_intensity={cfg.nebula_intensity}  nebula_scale={cfg.nebula_scale}")
+    print(f"  nebula_intensity={cfg.nebula_intensity}  nebula_scale={cfg.nebula_scale}  "
+          f"nebula_color_cycle_period={cfg.nebula_color_cycle_period:.1f}s")
     print(f"  warp_speed={cfg.warp_speed}  star_density={cfg.star_density}  "
           f"dust_amount={cfg.dust_amount}")
     print(f"  engine_freq_scale={cfg.engine_freq_scale}  comet_rate={cfg.comet_rate}  "

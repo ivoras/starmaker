@@ -91,9 +91,10 @@ def _comet_whoosh_waveform(seed: int, index: int, n_samples: int) -> np.ndarray:
     """One-shot whoosh aligned with a comet flyby (same schedule as ``comets.py``)."""
     if n_samples < 64:
         return np.zeros(0, dtype=np.float32)
-    rng = np.random.default_rng(
-        np.uint32((seed + 0x7F5FA000) ^ (index * 0xC001C001))
-    )
+    # Mask to 32 bits: (index * 0xC001C001) can exceed 2**32; np.uint32(big_int)
+    # raises OverflowError on Windows (C long is 32-bit signed).
+    mix = ((seed + 0x7F5FA000) ^ (index * 0xC001C001)) & 0xFFFFFFFF
+    rng = np.random.default_rng(mix)
     wn = rng.standard_normal(n_samples).astype(np.float64)
     sos = _butter_bandpass(260.0, 4500.0, SAMPLE_RATE, order=4)
     bp = sosfilt(sos, wn).astype(np.float32)

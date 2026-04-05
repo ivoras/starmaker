@@ -26,6 +26,8 @@ class Config:
     star_size: float = 1.0           # glow radius multiplier
     nebula_intensity: float = 1.0    # nebula brightness (0.0 – 3.0)
     nebula_scale: float = 1.0        # size of nebula features (0.1 – 5.0)
+    # Full cycle through purple→orange→green palettes (seconds)
+    nebula_color_cycle_period: float = 1800.0
     warp_speed: float = 1.0          # fly-through speed (0.1 – 5.0)
     dust_amount: float = 0.08        # foreground dust density (0.0 – 2.0)
 
@@ -64,6 +66,8 @@ class Config:
             raise ValueError("nebula-intensity must be between 0.0 and 3.0.")
         if not (0.1 <= self.nebula_scale <= 5.0):
             raise ValueError("nebula-scale must be between 0.1 and 5.0.")
+        if self.nebula_color_cycle_period <= 0.0:
+            raise ValueError("nebula-color-cycle-period must be positive.")
         if not (0.1 <= self.warp_speed <= 5.0):
             raise ValueError("warp-speed must be between 0.1 and 5.0.")
         if not (0.0 <= self.dust_amount <= 2.0):

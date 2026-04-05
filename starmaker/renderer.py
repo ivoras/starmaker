@@ -146,6 +146,10 @@ class Renderer:
             self._prog_nebula["u_nebula_intensity"].value = cfg.nebula_intensity
         if "u_nebula_scale" in self._prog_nebula:
             self._prog_nebula["u_nebula_scale"].value = cfg.nebula_scale
+        if "u_nebula_color_cycle_period" in self._prog_nebula:
+            self._prog_nebula["u_nebula_color_cycle_period"].value = (
+                cfg.nebula_color_cycle_period
+            )
 
         if "u_star_density" in self._prog_stars:
             self._prog_stars["u_star_density"].value = cfg.star_density

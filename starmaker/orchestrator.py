@@ -118,9 +118,10 @@ def run(cfg: Config) -> None:
                 print("[audio] Waiting for audio synthesis to finish...", flush=True)
             audio_ready.wait()
             if audio_error:
-                print(f"[audio] WARNING: audio synthesis failed: {audio_error[0]}", flush=True)
-                print("[audio] Outputting video without audio.", flush=True)
-                _safe_rename(tmp_video, str(output_path))
+                _try_remove(tmp_video)
+                _try_remove(tmp_audio)
+                err = audio_error[0]
+                raise RuntimeError(f"Audio synthesis failed: {err}") from err
             else:
                 print(f"[video] Muxing audio into {output_path} ...", flush=True)
                 from starmaker.encoder import mux_audio

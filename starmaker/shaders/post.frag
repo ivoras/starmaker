@@ -109,7 +109,7 @@ void main() {
         float w = u_resolution.y * 0.0042;
         float head_blob = exp(-(perp * perp) / (w * w))
             * smoothstep(-w * 1.2, w * 2.2, along);
-        float tail_len = max(u_resolution.y * 0.0275, 1.0);
+        float tail_len = max(u_resolution.y * 0.01375, 1.0);
         float tail = max(0.0, -along);
         float tail_glow = exp(-(perp * perp) / (w * w * 2.2))
             * exp(-tail / tail_len) * smoothstep(0.0, w * 0.35, tail);
