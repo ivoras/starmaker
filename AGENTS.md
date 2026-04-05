@@ -23,7 +23,7 @@ All noise in nebula/star/composite shaders is computed in GLSL without texture l
 
 **Comets** (`comets.py`): `build_comet_events(seed, duration, rate_per_hour)` yields Poisson-spaced start times and per-event duration (2.5–3.5 s) and UV path. `comet_overlay_uniforms(events, t, aspect)` drives `post.frag`. **Audio** builds the same event list and mixes a one-shot whoosh per event (band-pass noise + down-chirp, envelope matched to flyby). CLI: `--comet-rate` (0–24/h, 0 = off); `Config.comet_rate`.
 
-**Variable warp** (`variable_warp.py`): Optional Poisson-spaced changes (mean gap 1200 s ≈ 20 min) to `u_warp_speed`: each event picks `warp_speed + variable_warp` or `warp_speed - variable_warp` (50/50, clamped to \[0.1, 5.0\]). Between events, speed is `warp_speed`. CLI `--variable-warp` (0 = off); validate `warp_speed ± variable_warp` in range.
+**Variable warp** (`variable_warp.py`): Optional Poisson-spaced changes (mean gap 1200 s ≈ 20 min) to `u_warp_speed`: each event picks `warp_speed + variable_warp` or `warp_speed - variable_warp` (50/50, clamped to \[0.1, 9.0\]). Between events, speed is `warp_speed`. **Audio** uses the same schedule: `engine_freq_scale` targets `± 0.25 * variable_warp` in lockstep (slew-limited ~0.55 s) so pitch shifts stay click-free; validate both warp and engine ranges. CLI `--variable-warp` (0 = off).
 
 ### Frame Encoding Pipeline
 
@@ -50,5 +50,6 @@ Generated as **44.1 kHz stereo 16-bit WAV** in **10-second chunks**, then muxed 
 | **Blips** | Poisson events (~15–45 s); sine chirp 800–2000 Hz, decay envelope. |
 | **Clicks** | Poisson events (~5–15 s); short noise bursts. |
 | **Comet whoosh** | If `comet_rate` > 0: one-shot per scheduled flyby, synced with `comets.py`. |
+| **Rare SFX** | If `sounds_rate` > 0: Poisson times (mean gap 3600/`sounds_rate` s); kind 0–3 from `rare_sounds.py` (transporter, robot, bowl, chime), peak-scaled ~0.04. |
 
-Blips/clicks/pad are **not** scaled by `engine_freq_scale`. Seed controls schedules and phases.
+Blips/clicks/pad are **not** scaled by `engine_freq_scale`. Seed controls schedules and phases. **`sounds_rate`** (CLI `--sounds-rate`, default **6**/h) is independent of comets.

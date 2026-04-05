@@ -46,6 +46,9 @@ def run(cfg: Config) -> None:
                     cfg.seed,
                     cfg.engine_freq_scale,
                     cfg.comet_rate,
+                    cfg.sounds_rate,
+                    cfg.warp_speed,
+                    cfg.variable_warp,
                 )
                 audio_chunks = [0]
                 total_audio_chunks = [1]

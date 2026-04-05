@@ -13,7 +13,7 @@ uniform float u_time;
 uniform vec2  u_resolution;
 uniform int   u_star_density;   // 50 – 2000
 uniform float u_star_size;      // glow radius multiplier
-uniform float u_warp_speed;     // travel speed
+uniform float u_warp_speed;     // travel speed (scene uses ~0.1–9)
 uniform float u_seed;           // float from integer seed
 
 out vec4 fragColor;

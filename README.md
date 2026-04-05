@@ -25,10 +25,12 @@ Everything is deterministic: given the same `--seed`, the output is identical.
   (AMD), QSV (Intel) before falling back to `libx264`. Zero-copy frame
   transfer via [TurboPipe](https://github.com/BrokenSource/TurboPipe).
 - **Procedural audio** — Engine drone, warp hum, sub-bass throb, ambient pad,
-  panel blips, clicks, and optional **comet whooshes** (`--comet-rate`). Engine
+  panel blips, clicks, optional **comet whooshes** (`--comet-rate`), and rare
+  **calm bridge SFX** (`--sounds-rate`, default ~every 10 min). Engine
   pitches use `--engine-freq-scale`. Chunk boundaries use stereo delay + soft
   limiter to avoid periodic clicks.
 - **Comet flybys** — `--comet-rate` sets expected flybys per hour (0 = off).
+- **Rare SFX** — `--sounds-rate` sets expected quiet one-shots per hour (0 = off; default 6 ≈ every 10 min): transporter shimmer, soft robot tones, bowl ring, chime.
   `comets.py` schedules events from the seed; the post shader draws an additive
   streak, and audio plays a synced band-pass noise + down-chirp whoosh.
 - **4-hour default** — Designed for long ambient sessions. A typical 1080p
@@ -127,11 +129,12 @@ starmaker --comet-rate 3 -d 300 -o comets.mp4
 | `--star-size` | `1.0` | Star glow radius multiplier |
 | `--nebula-intensity` | `1.0` | Nebula brightness \[0.0–3.0\] |
 | `--nebula-scale` | `1.0` | Nebula feature size \[0.1–5.0\] |
-| `--warp-speed` | `1.0` | Fly-through speed \[0.1–5.0\] |
-| `--variable-warp` | `0` | If &gt;0, ~every 20m randomly use `warp-speed`±value (must stay in \[0.1,5.0\]); 0=off |
+| `--warp-speed` | `1.0` | Fly-through speed \[0.1–9.0\] |
+| `--variable-warp` | `0` | If &gt;0, ~every 20m `warp-speed`±value (warp in \[0.1–9.0\]); **audio** `engine-freq-scale` shifts by **one quarter** of that amount (same schedule, smoothed); both must stay in valid ranges; 0=off |
 | `--dust-amount` | `0.08` | Foreground dust density \[0.0–2.0\] |
 | `--engine-freq-scale` | `0.7` | Engine audio pitch multiplier \[0.25–2.5\]; `<1` lowers drone/sub/warp |
 | `--comet-rate` | `0` | Comet flybys per hour \[0–24\]; 0 disables (video + whoosh stay in sync) |
+| `--sounds-rate` | `6` | Rare calm SFX per hour \[0–60\]; 0 off; ~6 ≈ one every 10 min mean (Poisson) |
 | `--encoder` | `auto` | `auto` \| `nvenc` \| `amf` \| `qsv` \| `x264` |
 | `--no-audio` | off | Skip audio synthesis |
 
@@ -178,6 +181,7 @@ cli.py ──► orchestrator.py
 | Blips | 800–2000 Hz | Poisson-timed chirps |
 | Clicks | broadband | Poisson-timed noise bursts |
 | Comet whoosh | ~260–4500 Hz noise + down-chirp | When `--comet-rate` > 0; aligned with `comets.py` schedule |
+| Rare SFX | Transporter / robot / bowl / chime (see `rare_sounds.py`) | When `--sounds-rate` > 0; very low level |
 
 ---
 

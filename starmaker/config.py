@@ -28,7 +28,7 @@ class Config:
     nebula_scale: float = 1.0        # size of nebula features (0.1 – 5.0)
     # Full cycle through purple→orange→green palettes (seconds)
     nebula_color_cycle_period: float = 1800.0
-    warp_speed: float = 1.0          # fly-through speed (0.1 – 5.0)
+    warp_speed: float = 1.0          # fly-through speed (0.1 – 9.0)
     # Rare ±adjustment around warp_speed (0 = off). Mean interval ~20 min.
     variable_warp: float = 0.0
     dust_amount: float = 0.08        # foreground dust density (0.0 – 2.0)
@@ -43,6 +43,10 @@ class Config:
 
     # Comet flybys (video + synced whoosh). Expected events per hour; 0 = disabled.
     comet_rate: float = 0.0
+
+    # Rare quiet one-shot SFX (teleporter / robot / bowl / chime). Expected per hour; 0 = off.
+    # Default 6 ≈ one every 10 minutes on average (Poisson).
+    sounds_rate: float = 6.0
 
     # ------------------------------------------------------------------ #
 
@@ -70,16 +74,53 @@ class Config:
             raise ValueError("nebula-scale must be between 0.1 and 5.0.")
         if self.nebula_color_cycle_period <= 0.0:
             raise ValueError("nebula-color-cycle-period must be positive.")
-        if not (0.1 <= self.warp_speed <= 5.0):
-            raise ValueError("warp-speed must be between 0.1 and 5.0.")
+        if not (0.1 <= self.warp_speed <= 9.0):
+            raise ValueError("warp-speed must be between 0.1 and 9.0.")
         if self.variable_warp < 0.0:
             raise ValueError("variable-warp must be non-negative.")
         if self.variable_warp > 0.0:
             lo = self.warp_speed - self.variable_warp
             hi = self.warp_speed + self.variable_warp
-            if lo < 0.1 - 1e-9 or hi > 5.0 + 1e-9:
+            if lo < 0.1 - 1e-9 or hi > 9.0 + 1e-9:
                 raise ValueError(
-                    "warp-speed minus/plus variable-warp must stay within [0.1, 5.0]."
+                    "warp-speed minus/plus variable-warp must stay within [0.1, 9.0]."
+                )
+            h = 0.25 * self.variable_warp
+            k_lo = self.engine_freq_scale - h
+            k_hi = self.engine_freq_scale + h
+            if k_lo < 0.25 - 1e-9 or k_hi > 2.5 + 1e-9:
+                k0 = self.engine_freq_scale
+                vw = self.variable_warp
+                headroom_lo = max(0.0, 4.0 * (k0 - 0.25))
+                headroom_hi = max(0.0, 4.0 * (2.5 - k0))
+                vw_cap = min(headroom_lo, headroom_hi)
+                problems: list[str] = []
+                if k_lo < 0.25:
+                    problems.append(
+                        f"when warp drops, engine-freq-scale would go to {k_lo:.3f} "
+                        f"(below minimum 0.25)"
+                    )
+                if k_hi > 2.5:
+                    problems.append(
+                        f"when warp rises, engine-freq-scale would go to {k_hi:.3f} "
+                        f"(above maximum 2.5)"
+                    )
+                prob_txt = "; ".join(problems)
+                raise ValueError(
+                    f"With --engine-freq-scale {k0:g} and --variable-warp {vw:g}, audio "
+                    f"raises/lowers pitch by one quarter of that amount (+/-{h:g}), so the "
+                    f"engine scale would swing between {k_lo:.3f} and {k_hi:.3f}. "
+                    f"That interval must fit entirely in [0.25, 2.5]. {prob_txt}.\n\n"
+                    f"Rule of thumb: --variable-warp must be at most 4x your distance "
+                    f"from each end -- lower headroom {headroom_lo:.2f}, upper "
+                    f"{headroom_hi:.2f}, so for this engine-freq-scale use "
+                    f"--variable-warp <= {vw_cap:.2f} (approximately).\n\n"
+                    f"Examples that work: --engine-freq-scale 0.7 --variable-warp 0.8 "
+                    f"-> swing 0.5 to 0.9; --engine-freq-scale 1.0 --variable-warp 2.0 "
+                    f"-> swing 0.5 to 1.5.\n\n"
+                    f"What you can do: reduce --variable-warp (try {vw_cap * 0.95:.2f} "
+                    f"or less), choose --engine-freq-scale closer to mid-range (~1.35) "
+                    f"for more room, or set --variable-warp 0 to turn warp variation off."
                 )
         if not (0.0 <= self.dust_amount <= 2.0):
             raise ValueError("dust-amount must be between 0.0 and 2.0.")
@@ -89,3 +130,5 @@ class Config:
             raise ValueError("engine-freq-scale must be between 0.25 and 2.5.")
         if not (0.0 <= self.comet_rate <= 24.0):
             raise ValueError("comet-rate must be between 0.0 and 24.0 (events per hour).")
+        if not (0.0 <= self.sounds_rate <= 60.0):
+            raise ValueError("sounds-rate must be between 0.0 and 60.0 (events per hour).")

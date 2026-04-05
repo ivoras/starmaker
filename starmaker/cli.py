@@ -134,15 +134,15 @@ Examples:
         type=float,
         default=1.0,
         metavar="F",
-        help="Fly-through speed [0.1-5.0] (default: 1.0)",
+        help="Fly-through speed [0.1-9.0] (default: 1.0)",
     )
     p.add_argument(
         "--variable-warp",
         type=float,
         default=0.0,
         metavar="F",
-        help="If >0, ~every 20m randomly set warp to warp-speed±F (reproducible; "
-        "0 disables) (default: 0)",
+        help="If >0, ~every 20m warp-speed±F; engine-freq-scale follows at ±F/4 "
+        "in audio (slew-smoothed). Reproducible; 0 disables (default: 0)",
     )
     p.add_argument(
         "--dust-amount",
@@ -178,6 +178,15 @@ Examples:
         help="Comet flybys per hour (0 disables). Each flyby syncs a whoosh in audio "
         "[0-24] (default: 0)",
     )
+    p.add_argument(
+        "--sounds-rate",
+        type=float,
+        default=6.0,
+        metavar="N",
+        help="Rare calm bridge SFX per hour (0 off): transporter shimmer, soft robot "
+        "tones, bowl ring, chime — very quiet ASMR level; ~6 ≈ once per 10 min mean "
+        "[0-60] (default: 6)",
+    )
 
     return p
 
@@ -209,6 +218,7 @@ def main(argv: list[str] | None = None) -> None:
         no_audio=args.no_audio,
         engine_freq_scale=args.engine_freq_scale,
         comet_rate=args.comet_rate,
+        sounds_rate=args.sounds_rate,
     )
 
     try:
@@ -224,7 +234,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  warp_speed={cfg.warp_speed}{vw}  star_density={cfg.star_density}  "
           f"dust_amount={cfg.dust_amount}")
     print(f"  engine_freq_scale={cfg.engine_freq_scale}  comet_rate={cfg.comet_rate}  "
-          f"encoder={cfg.encoder}  output={cfg.output}")
+          f"sounds_rate={cfg.sounds_rate}  encoder={cfg.encoder}  output={cfg.output}")
 
     from starmaker.orchestrator import run
     run(cfg)

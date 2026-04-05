@@ -17,6 +17,10 @@ spaceship-like ambient soundscape:
                          imitating instrument panel transients.
   7. Comet whoosh      – Optional (``--comet-rate``): band-pass noise + down-chirp,
                          timed to match on-screen comet flybys (see ``comets.py``).
+  8. Rare bridge SFX  – Optional (``--sounds-rate``): very quiet one-shots on a
+                         Poisson schedule (default ~6/h ≈ every 10 min): soft transporter
+                         shimmer, gentle robot steps, resonant bowl, double chime
+                         (see ``rare_sounds.py``).
 
 All timing and frequencies seeded by the integer seed for reproducibility.
 Audio is written as a 44100 Hz stereo 16-bit PCM WAV file in chunks to
@@ -36,10 +40,26 @@ import numpy as np
 from scipy.signal import butter, sosfilt, sosfilt_zi
 
 from starmaker.comets import build_comet_events
+from starmaker.rare_sounds import build_rare_sound_starts, synth_rare_sound_waveform
+from starmaker.variable_warp import (
+    build_variable_warp_schedule,
+    engine_k_for_warp_value,
+)
 
 SAMPLE_RATE = 44100
 CHUNK_SECONDS = 10       # synthesise and write in 10-second chunks
 CHUNK_SAMPLES = SAMPLE_RATE * CHUNK_SECONDS
+
+# Nominal drone partials (Hz at k=1); actual freq = f0 * k_runtime
+_DRONE_F0: list[tuple[float, float]] = [
+    (55.0, 0.35),
+    (82.5, 0.25),
+    (110.0, 0.15),
+    (165.0, 0.08),
+]
+
+# Slew cap: ~0.6 scale units in ~0.55 s avoids clicks when engine k tracks warp.
+_K_SLEW_MAX_STEP = 0.6 / (0.55 * SAMPLE_RATE)
 
 
 # ---- Filter helpers -------------------------------------------------------
@@ -137,34 +157,51 @@ class AudioSynth:
         seed: int,
         engine_freq_scale: float = 0.7,
         comet_rate: float = 0.0,
+        sounds_rate: float = 6.0,
+        warp_speed: float = 1.0,
+        variable_warp: float = 0.0,
     ) -> None:
         self.duration = duration
         self.total_samples = int(duration * SAMPLE_RATE)
         self.rng = np.random.default_rng(seed)
         self._py_rng = random.Random(seed)
-        self._k = float(engine_freq_scale)
+        self._k_base = float(engine_freq_scale)
+        self._base_warp = float(warp_speed)
 
-        # Engine-layer frequencies (reference design at k=1.0)
-        k = self._k
-        self._drone_partials: list[tuple[float, float]] = [
-            (55.0 * k, 0.35),
-            (82.5 * k, 0.25),
-            (110.0 * k, 0.15),
-            (165.0 * k, 0.08),
-        ]
-        self._warp_220 = 220.0 * k
-        self._warp_330 = 330.0 * k
-        self._warp_220_ch = 220.7 * k
-        self._warp_330_ch = 329.3 * k
-        self._sub_hz = 30.0 * k
+        # Variable-warp schedule mirrors video; per-segment engine k = base ± 0.25*delta
+        self._warp_schedule = (
+            build_variable_warp_schedule(seed, duration, warp_speed, variable_warp)
+            if variable_warp > 0.0
+            else None
+        )
+        if self._warp_schedule is not None:
+            _starts, _warps = self._warp_schedule
+            self._vw_starts_arr = np.asarray(_starts, dtype=np.float64)
+            self._vw_k_arr = np.array(
+                [
+                    engine_k_for_warp_value(
+                        w, self._base_warp, self._k_base, variable_warp
+                    )
+                    for w in _warps
+                ],
+                dtype=np.float64,
+            )
+            self._k_tile_size = 512
+        else:
+            self._vw_starts_arr = np.array([0.0], dtype=np.float64)
+            self._vw_k_arr = np.array([self._k_base], dtype=np.float64)
+            self._k_tile_size = CHUNK_SAMPLES
 
-        # Stateful filters (maintain continuity across chunks)
-        bp_lo = max(8.0, 40.0 * k)
-        bp_hi = min(float(SAMPLE_RATE) * 0.45, max(bp_lo * 1.5, 200.0 * k))
+        self._k_slew_state = self._k_base
+
+        # Stateful filters fixed at base k (avoids coefficient/zi jumps); timbre drifts slightly.
+        k0 = self._k_base
+        bp_lo = max(8.0, 40.0 * k0)
+        bp_hi = min(float(SAMPLE_RATE) * 0.45, max(bp_lo * 1.5, 200.0 * k0))
         self._drone_bp = _StatefulFilter(
             _butter_bandpass(bp_lo, bp_hi, SAMPLE_RATE)
         )
-        self._pad_bp    = _StatefulFilter(_butter_bandpass(300, 600, SAMPLE_RATE, order=2))
+        self._pad_bp = _StatefulFilter(_butter_bandpass(300, 600, SAMPLE_RATE, order=2))
 
         # Pre-compute all event schedules (blips + clicks) upfront
         self._blip_times  = self._schedule_events(15.0, 45.0)
@@ -173,13 +210,18 @@ class AudioSynth:
         # Running sample counter (for phase continuity)
         self._sample_offset = 0
 
-        # Persistent phases for oscillators (avoids discontinuities at chunk boundaries)
-        _phase_freqs = (
-            [f for f, _ in self._drone_partials]
-            + [self._warp_220, self._warp_330, self._sub_hz,
-               self._warp_220_ch, self._warp_330_ch]
-        )
-        self._drone_phase = {f: 0.0 for f in _phase_freqs}
+        # Phases keyed by slot (not absolute Hz) so variable k does not remap dict keys
+        self._phase = {
+            "d0": 0.0,
+            "d1": 0.0,
+            "d2": 0.0,
+            "d3": 0.0,
+            "w220": 0.0,
+            "w330": 0.0,
+            "w220ch": 0.0,
+            "w330ch": 0.0,
+            "sub": 0.0,
+        }
         self._lfo_phases = {
             "drone_amp":  self._py_rng.uniform(0, 2 * math.pi),
             "warp_freq":  self._py_rng.uniform(0, 2 * math.pi),
@@ -200,6 +242,18 @@ class AudioSynth:
                 wave = _comet_whoosh_waveform(seed, i, ns)
                 self._comet_layers.append((int(ev.t_start * SAMPLE_RATE), wave))
 
+        self._rare_sound_layers: list[tuple[int, np.ndarray]] = []
+        if sounds_rate > 0.0:
+            starts = build_rare_sound_starts(seed, duration, sounds_rate)
+            for i, t0 in enumerate(starts):
+                rk = random.Random(
+                    (seed ^ 0xFEEDC0DE ^ (i * 0xACE5)) & 0xFFFFFFFFFFFFFFFF
+                )
+                kind = rk.randint(0, 3)
+                wave = synth_rare_sound_waveform(seed, i, kind)
+                if wave.size > 0:
+                    self._rare_sound_layers.append((int(t0 * SAMPLE_RATE), wave))
+
     def _schedule_events(self, avg_lo: float, avg_hi: float) -> list[int]:
         """Generate sorted list of sample indices for Poisson-distributed events."""
         avg_interval = self._py_rng.uniform(avg_lo, avg_hi)
@@ -210,68 +264,123 @@ class AudioSynth:
             t += self._py_rng.expovariate(1.0 / avg_interval)
         return sorted(times)
 
-    def _sine_chunk(self, freq: float, n: int) -> np.ndarray:
-        """Generate a sine wave chunk, maintaining phase across calls."""
-        phase = self._drone_phase[freq]
+    def _k_target_samples(self, chunk_start: int, n: int) -> np.ndarray:
+        """Stepped engine k targets (same boundaries as video warp segments)."""
+        if self._warp_schedule is None:
+            return np.full(n, self._k_base, dtype=np.float64)
+        ts = (chunk_start + np.arange(n, dtype=np.float64)) / SAMPLE_RATE
+        idx = np.searchsorted(self._vw_starts_arr, ts, side="right") - 1
+        idx = np.clip(idx, 0, len(self._vw_k_arr) - 1)
+        return self._vw_k_arr[idx].astype(np.float64, copy=True)
+
+    def _slew_k(self, k_target: np.ndarray) -> np.ndarray:
+        """Rate-limited ramp toward stepped k targets (avoids zipper noise)."""
+        n = len(k_target)
+        out = np.empty(n, dtype=np.float64)
+        cur = self._k_slew_state
+        mx = _K_SLEW_MAX_STEP
+        for i in range(n):
+            tg = float(k_target[i])
+            err = tg - cur
+            if err > mx:
+                cur += mx
+            elif err < -mx:
+                cur -= mx
+            else:
+                cur = tg
+            out[i] = cur
+        self._k_slew_state = float(cur)
+        return out
+
+    def _sine_slot(self, key: str, f0_hz: float, k_run: float, n: int) -> np.ndarray:
+        """Sine at f0_hz * k_run with persistent phase for ``key``."""
+        freq = f0_hz * k_run
+        phase = self._phase[key]
         t = np.arange(n, dtype=np.float64) / SAMPLE_RATE
         sig = np.sin(2.0 * math.pi * freq * t + phase).astype(np.float32)
-        # Advance phase
-        self._drone_phase[freq] = (phase + 2.0 * math.pi * freq * n / SAMPLE_RATE) % (2.0 * math.pi)
+        self._phase[key] = float(
+            (phase + 2.0 * math.pi * freq * n / SAMPLE_RATE) % (2.0 * math.pi)
+        )
         return sig
 
-    def _engine_drone(self, n: int, chunk_start: int) -> np.ndarray:
+    def _engine_drone(self, n: int, k_smooth: np.ndarray) -> np.ndarray:
         """Low-frequency engine drone: filtered sines + pink noise bandpass."""
-        sig = np.zeros(n, dtype=np.float32)
-        for freq, weight in self._drone_partials:
-            sig += self._sine_chunk(freq, n) * weight
-        # LFO amplitude modulation (slow breathing)
         lfo_phase = self._lfo_phases["drone_amp"]
-        lfo_freq = 0.05  # 20s period
+        lfo_freq = 0.05
         lfo_val = _lfo(lfo_freq, n, lfo_phase)
-        self._lfo_phases["drone_amp"] = (lfo_phase + 2 * math.pi * lfo_freq * n / SAMPLE_RATE) % (2 * math.pi)
+        self._lfo_phases["drone_amp"] = (
+            lfo_phase + 2 * math.pi * lfo_freq * n / SAMPLE_RATE
+        ) % (2 * math.pi)
         amp_mod = 0.6 + 0.4 * lfo_val
 
-        # Pink noise bandpassed into engine frequency range
-        pink = self._drone_bp.process(_pink_noise(n, self.rng))
-        return (sig * amp_mod + pink * 0.12).astype(np.float32)
+        sig = np.zeros(n, dtype=np.float32)
+        tile = self._k_tile_size
+        for i in range(0, n, tile):
+            m = min(tile, n - i)
+            sl = slice(i, i + m)
+            k_m = float(np.mean(k_smooth[sl]))
+            chunk_amp = amp_mod[sl]
+            acc = np.zeros(m, dtype=np.float32)
+            for j, (f0, weight) in enumerate(_DRONE_F0):
+                acc += self._sine_slot(f"d{j}", f0, k_m, m) * weight
+            acc *= chunk_amp
+            acc += self._drone_bp.process(_pink_noise(m, self.rng)) * 0.12
+            sig[sl] = acc
+        return sig.astype(np.float32)
 
-    def _warp_hum(self, n: int) -> np.ndarray:
+    def _warp_hum(self, n: int, k_smooth: np.ndarray) -> np.ndarray:
         """Mid-range warp coil hum with chorus and FM wobble."""
-        # Slow FM wobble on carrier
         warp_phase = self._lfo_phases["warp_freq"]
         warp_lfo_freq = 0.03
         warp_lfo = _lfo(warp_lfo_freq, n, warp_phase)
-        self._lfo_phases["warp_freq"] = (warp_phase + 2 * math.pi * warp_lfo_freq * n / SAMPLE_RATE) % (2 * math.pi)
+        self._lfo_phases["warp_freq"] = (
+            warp_phase + 2 * math.pi * warp_lfo_freq * n / SAMPLE_RATE
+        ) % (2 * math.pi)
 
-        # Wobble (Hz) scales with engine pitch so timbre stays coherent.
-        wobble = (warp_lfo * 4.0 - 2.0) * self._k
-        p1 = self._drone_phase[self._warp_220]
-        p2 = self._drone_phase[self._warp_330]
-        inst1 = self._warp_220 + wobble
-        inst2 = self._warp_330 + wobble * 0.5
+        out = np.zeros(n, dtype=np.float32)
         dphi = 2.0 * math.pi / SAMPLE_RATE
-        phase1 = p1 + np.cumsum(inst1 * dphi)
-        phase2 = p2 + np.cumsum(inst2 * dphi)
-        carrier1 = np.sin(phase1).astype(np.float32)
-        carrier2 = np.sin(phase2).astype(np.float32)
-        self._drone_phase[self._warp_220] = float(phase1[-1] % (2 * math.pi))
-        self._drone_phase[self._warp_330] = float(phase2[-1] % (2 * math.pi))
+        tile = self._k_tile_size
+        for i in range(0, n, tile):
+            m = min(tile, n - i)
+            sl = slice(i, i + m)
+            k_m = float(np.mean(k_smooth[sl]))
+            wobble = (warp_lfo[sl] * 4.0 - 2.0) * k_m
+            inst1 = 220.0 * k_m + wobble
+            inst2 = 330.0 * k_m + wobble * 0.5
+            p1 = self._phase["w220"]
+            p2 = self._phase["w330"]
+            phase1 = p1 + np.cumsum(inst1 * dphi)
+            phase2 = p2 + np.cumsum(inst2 * dphi)
+            out[sl] += (np.sin(phase1) * 0.12 + np.sin(phase2) * 0.12).astype(
+                np.float32
+            )
+            self._phase["w220"] = float(phase1[-1] % (2 * math.pi))
+            self._phase["w330"] = float(phase2[-1] % (2 * math.pi))
+            out[sl] += (
+                self._sine_slot("w220ch", 220.7, k_m, m)
+                + self._sine_slot("w330ch", 329.3, k_m, m)
+            ) * 0.04
+        return out.astype(np.float32)
 
-        # Chorus at true detuned rates (separate phase state, not 220 Hz step)
-        chorus1 = self._sine_chunk(self._warp_220_ch, n)
-        chorus2 = self._sine_chunk(self._warp_330_ch, n)
-        return ((carrier1 + carrier2) * 0.12 + (chorus1 + chorus2) * 0.04).astype(np.float32)
-
-    def _sub_bass(self, n: int) -> np.ndarray:
+    def _sub_bass(self, n: int, k_smooth: np.ndarray) -> np.ndarray:
         """30 Hz sub-bass with slow rhythmic envelope."""
         sub_phase = self._lfo_phases["sub_amp"]
-        # Period 5-7 seconds, slightly irregular
         sub_lfo_freq = 0.16
         sub_lfo = _lfo(sub_lfo_freq, n, sub_phase)
-        self._lfo_phases["sub_amp"] = (sub_phase + 2 * math.pi * sub_lfo_freq * n / SAMPLE_RATE) % (2 * math.pi)
-        env = sub_lfo ** 3.0  # exponential shape for punchy throb
-        sig = self._sine_chunk(self._sub_hz, n)
-        return (sig * env * 0.20).astype(np.float32)
+        self._lfo_phases["sub_amp"] = (
+            sub_phase + 2 * math.pi * sub_lfo_freq * n / SAMPLE_RATE
+        ) % (2 * math.pi)
+        env = sub_lfo ** 3.0
+        out = np.zeros(n, dtype=np.float32)
+        tile = self._k_tile_size
+        for i in range(0, n, tile):
+            m = min(tile, n - i)
+            sl = slice(i, i + m)
+            k_m = float(np.mean(k_smooth[sl]))
+            out[sl] = (
+                self._sine_slot("sub", 30.0, k_m, m) * env[sl] * 0.20
+            )
+        return out.astype(np.float32)
 
     def _ambient_pad(self, n: int) -> np.ndarray:
         """Narrow bandpass filtered white noise: air circulation texture."""
@@ -314,15 +423,31 @@ class AudioSynth:
 
     def _mix_chunk(self, n: int, chunk_start: int) -> np.ndarray:
         """Synthesise and mix all layers for a chunk of n samples."""
+        k_tgt = self._k_target_samples(chunk_start, n)
+        k_smooth = self._slew_k(k_tgt)
         sig = np.zeros(n, dtype=np.float32)
-        sig += self._engine_drone(n, chunk_start)
-        sig += self._warp_hum(n)
-        sig += self._sub_bass(n)
+        sig += self._engine_drone(n, k_smooth)
+        sig += self._warp_hum(n, k_smooth)
+        sig += self._sub_bass(n, k_smooth)
         sig += self._ambient_pad(n)
         self._inject_event(sig, self._blip_times, chunk_start, "blip")
         self._inject_event(sig, self._click_times, chunk_start, "click")
 
         for s0, wdata in self._comet_layers:
+            if wdata.size == 0:
+                continue
+            end = s0 + len(wdata)
+            if end <= chunk_start or s0 >= chunk_start + n:
+                continue
+            a0 = max(chunk_start, s0)
+            a1 = min(chunk_start + n, end)
+            src_lo = a0 - s0
+            src_hi = a1 - s0
+            dst_lo = a0 - chunk_start
+            dst_hi = a1 - chunk_start
+            sig[dst_lo:dst_hi] += wdata[src_lo:src_hi]
+
+        for s0, wdata in self._rare_sound_layers:
             if wdata.size == 0:
                 continue
             end = s0 + len(wdata)
