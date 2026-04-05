@@ -52,11 +52,14 @@ void main() {
         // Stable star position in a small square around the origin. Perspective
         // projection and cycling depth create the impression of flying forward.
         vec2 base = vec2(
-            hash1(fi * 11.31) * 2.0 - 1.0,
-            hash1(fi * 17.17) * 2.0 - 1.0
+            hash1(fi * 11.31 + 3.73) * 2.0 - 1.0,
+            hash1(fi * 17.17 + 197.51) * 2.0 - 1.0
         );
         base.x *= aspect;
         base *= 0.82;
+
+        // Skip stars too close to the origin — they produce ugly center streaks.
+        if (length(base) < 0.12) continue;
 
         // Stars move toward the viewer as depth shrinks toward zero, then wrap.
         float cycle = fract(hash1(fi * 0.071) + u_time * (0.045 + 0.11 * u_warp_speed));
