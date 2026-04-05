@@ -137,6 +137,14 @@ Examples:
         help="Fly-through speed [0.1-5.0] (default: 1.0)",
     )
     p.add_argument(
+        "--variable-warp",
+        type=float,
+        default=0.0,
+        metavar="F",
+        help="If >0, ~every 20m randomly set warp to warp-speed±F (reproducible; "
+        "0 disables) (default: 0)",
+    )
+    p.add_argument(
         "--dust-amount",
         type=float,
         default=0.08,
@@ -195,6 +203,7 @@ def main(argv: list[str] | None = None) -> None:
         nebula_scale=args.nebula_scale,
         nebula_color_cycle_period=args.nebula_color_cycle_period,
         warp_speed=args.warp_speed,
+        variable_warp=args.variable_warp,
         dust_amount=args.dust_amount,
         encoder=args.encoder,
         no_audio=args.no_audio,
@@ -211,7 +220,8 @@ def main(argv: list[str] | None = None) -> None:
           f"{cfg.duration:.0f}s ({cfg.total_frames} frames)")
     print(f"  nebula_intensity={cfg.nebula_intensity}  nebula_scale={cfg.nebula_scale}  "
           f"nebula_color_cycle_period={cfg.nebula_color_cycle_period:.1f}s")
-    print(f"  warp_speed={cfg.warp_speed}  star_density={cfg.star_density}  "
+    vw = f" variable_warp={cfg.variable_warp}" if cfg.variable_warp > 0.0 else ""
+    print(f"  warp_speed={cfg.warp_speed}{vw}  star_density={cfg.star_density}  "
           f"dust_amount={cfg.dust_amount}")
     print(f"  engine_freq_scale={cfg.engine_freq_scale}  comet_rate={cfg.comet_rate}  "
           f"encoder={cfg.encoder}  output={cfg.output}")

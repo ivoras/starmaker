@@ -9,6 +9,7 @@ starmaker/encoder.py
 starmaker/orchestrator.py
 starmaker/renderer.py
 starmaker/utils.py
+starmaker/variable_warp.py
 starmaker.egg-info/PKG-INFO
 starmaker.egg-info/SOURCES.txt
 starmaker.egg-info/dependency_links.txt

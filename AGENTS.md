@@ -23,6 +23,8 @@ All noise in nebula/star/composite shaders is computed in GLSL without texture l
 
 **Comets** (`comets.py`): `build_comet_events(seed, duration, rate_per_hour)` yields Poisson-spaced start times and per-event duration (2.5–3.5 s) and UV path. `comet_overlay_uniforms(events, t, aspect)` drives `post.frag`. **Audio** builds the same event list and mixes a one-shot whoosh per event (band-pass noise + down-chirp, envelope matched to flyby). CLI: `--comet-rate` (0–24/h, 0 = off); `Config.comet_rate`.
 
+**Variable warp** (`variable_warp.py`): Optional Poisson-spaced changes (mean gap 1200 s ≈ 20 min) to `u_warp_speed`: each event picks `warp_speed + variable_warp` or `warp_speed - variable_warp` (50/50, clamped to \[0.1, 5.0\]). Between events, speed is `warp_speed`. CLI `--variable-warp` (0 = off); validate `warp_speed ± variable_warp` in range.
+
 ### Frame Encoding Pipeline
 
 - **moderngl** standalone context, target resolution FBOs as above.

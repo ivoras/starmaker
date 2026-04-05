@@ -128,6 +128,7 @@ starmaker --comet-rate 3 -d 300 -o comets.mp4
 | `--nebula-intensity` | `1.0` | Nebula brightness \[0.0–3.0\] |
 | `--nebula-scale` | `1.0` | Nebula feature size \[0.1–5.0\] |
 | `--warp-speed` | `1.0` | Fly-through speed \[0.1–5.0\] |
+| `--variable-warp` | `0` | If &gt;0, ~every 20m randomly use `warp-speed`±value (must stay in \[0.1,5.0\]); 0=off |
 | `--dust-amount` | `0.08` | Foreground dust density \[0.0–2.0\] |
 | `--engine-freq-scale` | `0.7` | Engine audio pitch multiplier \[0.25–2.5\]; `<1` lowers drone/sub/warp |
 | `--comet-rate` | `0` | Comet flybys per hour \[0–24\]; 0 disables (video + whoosh stay in sync) |

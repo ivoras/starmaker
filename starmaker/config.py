@@ -29,6 +29,8 @@ class Config:
     # Full cycle through purple→orange→green palettes (seconds)
     nebula_color_cycle_period: float = 1800.0
     warp_speed: float = 1.0          # fly-through speed (0.1 – 5.0)
+    # Rare ±adjustment around warp_speed (0 = off). Mean interval ~20 min.
+    variable_warp: float = 0.0
     dust_amount: float = 0.08        # foreground dust density (0.0 – 2.0)
 
     # Encoding
@@ -70,6 +72,15 @@ class Config:
             raise ValueError("nebula-color-cycle-period must be positive.")
         if not (0.1 <= self.warp_speed <= 5.0):
             raise ValueError("warp-speed must be between 0.1 and 5.0.")
+        if self.variable_warp < 0.0:
+            raise ValueError("variable-warp must be non-negative.")
+        if self.variable_warp > 0.0:
+            lo = self.warp_speed - self.variable_warp
+            hi = self.warp_speed + self.variable_warp
+            if lo < 0.1 - 1e-9 or hi > 5.0 + 1e-9:
+                raise ValueError(
+                    "warp-speed minus/plus variable-warp must stay within [0.1, 5.0]."
+                )
         if not (0.0 <= self.dust_amount <= 2.0):
             raise ValueError("dust-amount must be between 0.0 and 2.0.")
         if self.encoder not in ("auto", "nvenc", "amf", "qsv", "x264"):

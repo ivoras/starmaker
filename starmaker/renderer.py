@@ -10,14 +10,16 @@ Pass 1  nebula_fbo    Full-screen nebula background
 Pass 2  stars_fbo     Starfield + warp streaks (RGBA)
 Pass 3  composite_fbo Blend nebula + stars + dust (tonemap)
 Pass 4  post_fbo      Bloom, vignette, grain, grade, gamma → float RGB
-                      (packed to RGB8 on CPU for ffmpeg)
+                      (read back as RGB8 via GL_UNSIGNED_BYTE)
 
 Performance note
 ----------------
 Normalized RGB8 render targets are buggy on some Windows GL drivers (any
-non-zero shade becomes 255), so the post pass uses half-float and we convert
-to RGB8 on the CPU. That adds an extra GPU read (~2× bytes vs RGB8), NumPy
-work, and a buffer upload each frame versus the old single ``read_into``.
+non-zero shade becomes 255 — a write-path driver bug).  The post pass
+therefore renders to a half-float FBO.  The readback uses dtype='f1'
+(GL_UNSIGNED_BYTE), which asks the driver to convert float→byte during the
+DMA — a read-path operation unaffected by the render-target bug.  This
+halves PCIe bandwidth and eliminates all CPU numpy conversion work.
 """
 
 from __future__ import annotations
@@ -31,6 +33,10 @@ import numpy as np
 
 from starmaker.comets import build_comet_events, comet_overlay_uniforms
 from starmaker.config import Config
+from starmaker.variable_warp import (
+    build_variable_warp_schedule,
+    effective_warp_speed,
+)
 
 
 def _load_shader(name: str) -> str:
@@ -103,7 +109,7 @@ class Renderer:
 
         # Post output must be float: on some Windows GL stacks, normalized RGB8
         # render targets quantize almost every non-zero fragment to 255 (flat white).
-        # Half-float FBO + CPU quantize to RGB8 matches what ffmpeg expects.
+        # Half-float FBO + GL_UNSIGNED_BYTE readback (dtype='f1') avoids the bug.
         self._post_tex = self.ctx.texture((w, h), 3, dtype="f2")
         self._post_fbo = self.ctx.framebuffer(color_attachments=[self._post_tex])
 
@@ -114,19 +120,20 @@ class Renderer:
             tex.repeat_y = False
             tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
 
-        # Double-buffered output buffers (for TurboPipe) — packed RGB8 for ffmpeg
+        # Double-buffered output buffers (for TurboPipe) — packed RGB8 for ffmpeg.
+        # The GPU reads directly into these as GL_UNSIGNED_BYTE, so no separate
+        # HDR readback buffer or CPU conversion workspace is needed.
         bytes_per_frame = w * h * 3
         self.buffers = [self.ctx.buffer(reserve=bytes_per_frame) for _ in range(2)]
-        self._post_hdr_read = self.ctx.buffer(reserve=w * h * 3 * 2)
-        # Preallocated pack workspace (avoid per-frame alloc in the readback path)
-        self._pack_f32 = np.empty((h, w, 3), dtype=np.float32)
-        self._pack_u8 = np.empty((h, w, 3), dtype=np.uint8)
         self._buf_idx = 0
 
         # Cache the seed as a float uniform value
         self._seed_f = float(cfg.seed % 100000)
         self._comet_events = build_comet_events(cfg.seed, cfg.duration, cfg.comet_rate)
         self._aspect_wh = float(w) / float(h)
+        self._warp_schedule = build_variable_warp_schedule(
+            cfg.seed, cfg.duration, cfg.warp_speed, cfg.variable_warp
+        )
 
         # Set static uniforms
         self._set_static_uniforms()
@@ -155,21 +162,9 @@ class Renderer:
             self._prog_stars["u_star_density"].value = cfg.star_density
         if "u_star_size" in self._prog_stars:
             self._prog_stars["u_star_size"].value = cfg.star_size
-        if "u_warp_speed" in self._prog_stars:
-            self._prog_stars["u_warp_speed"].value = cfg.warp_speed
 
         if "u_dust_amount" in self._prog_composite:
             self._prog_composite["u_dust_amount"].value = cfg.dust_amount
-
-    def _pack_post_half_to_rgb8(self, dst: moderngl.Buffer) -> None:
-        """Convert post FBO (RGB f16, display-referred 0–1) into dst RGB8 bytes."""
-        raw = self._post_hdr_read.read()
-        f16 = np.frombuffer(raw, dtype=np.float16).reshape(self._h, self._w, 3)
-        np.multiply(f16, 255.0, out=self._pack_f32, dtype=np.float32, casting="unsafe")
-        np.rint(self._pack_f32, out=self._pack_f32)
-        np.clip(self._pack_f32, 0.0, 255.0, out=self._pack_f32)
-        self._pack_u8[:] = self._pack_f32.astype(np.uint8, copy=False)
-        dst.write(self._pack_u8)
 
     def peek_output_buffer(self) -> moderngl.Buffer:
         """The buffer the next :meth:`render_frame` will ``read_into``.
@@ -188,6 +183,9 @@ class Renderer:
         readback. The caller then passes the returned buffer to ``turbopipe.pipe``.
         """
         t = frame_index / self.cfg.fps
+        warp_now = effective_warp_speed(
+            self._warp_schedule, self.cfg.warp_speed, t
+        )
 
         # -- Pass 1: Nebula -------------------------------------------------
         self._nebula_fbo.use()
@@ -201,6 +199,8 @@ class Renderer:
         self._stars_fbo.clear(0.0, 0.0, 0.0, 0.0)
         if "u_time" in self._prog_stars:
             self._prog_stars["u_time"].value = t
+        if "u_warp_speed" in self._prog_stars:
+            self._prog_stars["u_warp_speed"].value = warp_now
         self._vao_stars.render(moderngl.TRIANGLE_STRIP)
 
         # -- Pass 3: Composite ----------------------------------------------
@@ -234,17 +234,18 @@ class Renderer:
         self._vao_post.render(moderngl.TRIANGLE_STRIP)
 
         # -- Readback into double-buffered output ---------------------------
+        # dtype='f1' = GL_UNSIGNED_BYTE: driver converts float→byte during the
+        # PBO DMA, so no CPU numpy work is needed.  This is a read-path
+        # operation and is not affected by the Windows RGB8 render-target bug.
         buf = self.buffers[self._buf_idx]
         self._buf_idx ^= 1
-        self._post_fbo.read_into(self._post_hdr_read, components=3, dtype="f2")
-        self._pack_post_half_to_rgb8(buf)
+        self._post_fbo.read_into(buf, components=3, dtype="f1")
         return buf
 
     def release(self) -> None:
         """Free GPU resources."""
         for buf in self.buffers:
             buf.release()
-        self._post_hdr_read.release()
         for obj in (
             self._nebula_tex, self._stars_tex, self._comp_tex, self._post_tex,
             self._nebula_fbo, self._stars_fbo, self._comp_fbo, self._post_fbo,
