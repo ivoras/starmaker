@@ -32,10 +32,11 @@ float hash21(vec2 p) {
 vec3 bloom(sampler2D tex, vec2 uv, vec2 texel_size) {
     float bloom_radius = 2.5;
     vec3 acc = vec3(0.0);
-    float weight_sum = 0.0;
 
     // 13-tap cross + diagonals (cheap approximation of Kawase bloom)
     const int TAPS = 13;
+    // weight_sum = 1.0 + 4*0.6 + 4*0.3 + 4*0.15 = 5.2
+    const float INV_WEIGHT_SUM = 1.0 / 5.2;
     vec2 offsets[13] = vec2[13](
         vec2( 0.0,  0.0),
         vec2( 1.0,  0.0), vec2(-1.0,  0.0),
@@ -61,10 +62,9 @@ vec3 bloom(sampler2D tex, vec2 uv, vec2 texel_size) {
         float lum = dot(sample_col, vec3(0.299, 0.587, 0.114));
         float bloom_mask = smoothstep(0.25, 0.85, lum);
         acc += sample_col * bloom_mask * weights[i];
-        weight_sum += weights[i];
     }
 
-    return acc / weight_sum;
+    return acc * INV_WEIGHT_SUM;
 }
 
 void main() {
@@ -80,7 +80,7 @@ void main() {
     // 2. Vignette
     vec2 vig_uv = uv * 2.0 - 1.0;
     float vig = 1.0 - dot(vig_uv * vec2(0.9, 0.85), vig_uv * vec2(0.9, 0.85));
-    vig = clamp(pow(vig, 1.5), 0.0, 1.0);
+    vig = clamp(vig * sqrt(vig), 0.0, 1.0);  // pow(x, 1.5) without general pow
     col *= (0.5 + 0.5 * vig);
 
     // 3. Film grain
