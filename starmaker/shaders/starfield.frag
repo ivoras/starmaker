@@ -49,21 +49,23 @@ void main() {
     for (int i = 0; i < star_count; i++) {
         float fi = float(i) + u_seed;
 
-        // Stable star position in a small square around the origin. Perspective
-        // projection and cycling depth create the impression of flying forward.
+        // Depth cycles from far (1.25) to near (0.05) then wraps.  Each wrap
+        // increments cycle_id, which re-seeds the star's base position so it
+        // doesn't reappear on the same radial line every pass.
+        float raw_cycle = hash1(fi * 0.071) + u_time * (0.045 + 0.11 * u_warp_speed);
+        float cycle = fract(raw_cycle);
+        float cycle_id = floor(raw_cycle);
+        float depth = mix(1.25, 0.05, cycle);
+
         vec2 base = vec2(
-            hash1(fi * 11.31 + 3.73) * 2.0 - 1.0,
-            hash1(fi * 17.17 + 197.51) * 2.0 - 1.0
+            hash1(fi * 11.31 + 3.73 + cycle_id * 53.71) * 2.0 - 1.0,
+            hash1(fi * 17.17 + 197.51 + cycle_id * 91.13) * 2.0 - 1.0
         );
         base.x *= aspect;
         base *= 0.82;
 
         // Skip stars too close to the origin — they produce ugly center streaks.
         if (length(base) < 0.12) continue;
-
-        // Stars move toward the viewer as depth shrinks toward zero, then wrap.
-        float cycle = fract(hash1(fi * 0.071) + u_time * (0.045 + 0.11 * u_warp_speed));
-        float depth = mix(1.25, 0.05, cycle);
         vec2 proj = base / depth;
 
         // Skip stars far outside the viewport to reduce haze.
