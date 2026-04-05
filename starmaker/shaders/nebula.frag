@@ -15,30 +15,44 @@ uniform float u_seed;            // float derived from integer seed
 
 out vec4 fragColor;
 
-float hash12(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+// Unit-ish gradient at lattice point (Perlin-style); avoids value-noise “squares”
+vec2 hash22(vec2 p) {
+    float n = sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123;
+    float a = fract(n) * 6.28318530718;
+    return vec2(cos(a), sin(a));
 }
 
-float value_noise2(vec2 p) {
+// Improved Perlin: quintic fade removes second-derivative kinks along grid lines
+float grad_noise2(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    float a = hash12(i);
-    float b = hash12(i + vec2(1.0, 0.0));
-    float c = hash12(i + vec2(0.0, 1.0));
-    float d = hash12(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+
+    vec2 g00 = hash22(i + vec2(0.0, 0.0));
+    vec2 g10 = hash22(i + vec2(1.0, 0.0));
+    vec2 g01 = hash22(i + vec2(0.0, 1.0));
+    vec2 g11 = hash22(i + vec2(1.0, 1.0));
+
+    float n00 = dot(g00, f - vec2(0.0, 0.0));
+    float n10 = dot(g10, f - vec2(1.0, 0.0));
+    float n01 = dot(g01, f - vec2(0.0, 1.0));
+    float n11 = dot(g11, f - vec2(1.0, 1.0));
+
+    return mix(mix(n00, n10, u.x), mix(n01, n11, u.x), u.y);
 }
 
 float fbm(vec2 p) {
     float value = 0.0;
     float amp = 0.5;
+    float wsum = 0.0;
     for (int i = 0; i < 5; i++) {
-        value += amp * value_noise2(p);
+        // Perlin is ~[-0.55,0.55] per octave; map to [0,1] like old value noise
+        value += amp * (grad_noise2(p) * 0.55 + 0.5);
+        wsum += amp;
         p = p * 2.03 + vec2(17.1, 9.2);
         amp *= 0.5;
     }
-    return value;
+    return value / wsum;
 }
 
 // 2D rotation helper
@@ -62,7 +76,8 @@ void main() {
     float n1 = fbm(q1);
     float n2 = fbm(q2);
     float density = n1 * 0.72 + n2 * 0.43;
-    float mask = smoothstep(0.50, 0.78, density);
+    // Wider soft band reads as fluffy cloud edges, not hard blobs
+    float mask = smoothstep(0.46, 0.82, density);
 
     vec3 base_space = vec3(0.003, 0.005, 0.012);
 
@@ -102,7 +117,7 @@ void main() {
     vec3 nebula_colour = mix(cool, midc, hue_mix);
     nebula_colour = mix(nebula_colour, warm, smoothstep(0.72, 0.92, density) * 0.35);
 
-    float inner_glow = smoothstep(0.58, 0.92, density);
+    float inner_glow = smoothstep(0.54, 0.90, density);
     vec3 nebula = nebula_colour * mask * (0.16 + inner_glow * 0.70) * u_nebula_intensity;
 
     // No upper clamp: nebula renders to float16 FBO. Clamping here caused white
