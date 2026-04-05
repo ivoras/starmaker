@@ -30,29 +30,23 @@ float hash2(vec2 p) {
 }
 
 float dustNoise(vec2 uv) {
-    // Tile into cells and place a dust mote in each cell
-    float scale = 120.0;  // grid density
+    // Tile into cells and place a dust mote in each cell.
+    // Mote centres stay within [0.06, 0.94] and max radius is 0.020,
+    // so no mote can ever reach a pixel in a neighbouring cell — only
+    // the current cell needs evaluation (saves 8 of 9 iterations).
+    float scale = 120.0;
     vec2 cell = floor(uv * scale);
-    vec2 frac = fract(uv * scale);
+    vec2 frac_uv = fract(uv * scale);
 
-    float dust = 0.0;
-    for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-            vec2 neighbour = cell + vec2(dx, dy);
-            float h = hash2(neighbour + u_seed * 0.001);
-            float h2 = hash2(neighbour + vec2(7.3, 2.1) + u_seed * 0.001);
-            // Mote position within cell (0.1..0.9 to avoid edge overlap)
-            vec2 mote_pos = vec2(0.1 + 0.8 * h, 0.1 + 0.8 * h2);
-            // Very slow drift
-            float drift_phase = h * 6.283 + u_time * (0.005 + h * 0.01);
-            mote_pos += 0.04 * vec2(cos(drift_phase), sin(drift_phase));
-            float d = length(frac - vec2(dx, dy) - mote_pos);
-            float radius = 0.006 + 0.014 * hash2(neighbour + vec2(3.1, 9.9));
-            float brightness = hash2(neighbour + vec2(1.1, 5.5)) * 0.35;
-            dust += brightness * soft_disc(d, radius);
-        }
-    }
-    return dust;
+    float h  = hash2(cell + u_seed * 0.001);
+    float h2 = hash2(cell + vec2(7.3, 2.1) + u_seed * 0.001);
+    vec2 mote_pos = vec2(0.1 + 0.8 * h, 0.1 + 0.8 * h2);
+    float drift_phase = h * 6.283 + u_time * (0.005 + h * 0.01);
+    mote_pos += 0.04 * vec2(cos(drift_phase), sin(drift_phase));
+    float d = length(frac_uv - mote_pos);
+    float radius = 0.006 + 0.014 * hash2(cell + vec2(3.1, 9.9));
+    float brightness = hash2(cell + vec2(1.1, 5.5)) * 0.35;
+    return brightness * soft_disc(d, radius);
 }
 
 void main() {

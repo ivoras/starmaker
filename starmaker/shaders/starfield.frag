@@ -65,7 +65,7 @@ void main() {
         base *= 0.82;
 
         // Skip stars too close to the origin — they produce ugly center streaks.
-        if (length(base) < 0.12) continue;
+        if (dot(base, base) < 0.0144) continue;  // 0.12^2
         vec2 proj = base / depth;
 
         // Skip stars far outside the viewport to reduce haze.
@@ -73,15 +73,19 @@ void main() {
             continue;
         }
 
-        vec2 dir = normalize(proj + vec2(1e-4));
-        vec2 to_pixel = screen - proj;
-        float along = dot(to_pixel, dir);
-        float perp_d = length(to_pixel - along * dir);
-
+        // Compute size properties early so we can cull by distance.
         float proximity = 1.0 - depth / 1.25;
         float streak_len = (0.004 + proximity * proximity * 0.17) * u_star_size * (0.65 + u_warp_speed * 0.55);
         float point_r = (0.0009 + proximity * 0.0032) * u_star_size;
         float glow_r = point_r * 5.0;
+
+        vec2 to_pixel = screen - proj;
+        float max_r = glow_r + streak_len;
+        if (dot(to_pixel, to_pixel) > max_r * max_r) continue;
+
+        vec2 dir = normalize(proj + vec2(1e-4));
+        float along = dot(to_pixel, dir);
+        float perp_d = length(to_pixel - along * dir);
 
         float along_clamped = clamp(along, -point_r, streak_len);
         float capsule_dist = length(vec2(along - along_clamped, perp_d));
@@ -89,6 +93,7 @@ void main() {
         float core = soft_disc(capsule_dist, point_r);
         float glow = soft_disc(capsule_dist, glow_r) * (0.08 + proximity * 0.12);
         float star_brightness = (core + glow) * (0.10 + proximity * proximity * 2.2);
+        if (star_brightness < 0.001) continue;
 
         float twinkle = 0.96 + 0.04 * sin(u_time * (1.0 + hash1(fi) * 2.0) + fi);
         star_brightness *= twinkle;

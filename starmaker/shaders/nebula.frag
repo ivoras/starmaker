@@ -15,11 +15,11 @@ uniform float u_seed;            // float derived from integer seed
 
 out vec4 fragColor;
 
-// Unit-ish gradient at lattice point (Perlin-style); avoids value-noise “squares”
+// Gradient at lattice point — two independent sin-hashes instead of
+// hash→angle→cos/sin, saving one SFU trig op per call (×40 per pixel).
 vec2 hash22(vec2 p) {
-    float n = sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123;
-    float a = fract(n) * 6.28318530718;
-    return vec2(cos(a), sin(a));
+    vec2 d = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+    return fract(sin(d) * 43758.5453) * 2.0 - 1.0;
 }
 
 // Improved Perlin: quintic fade removes second-derivative kinks along grid lines
